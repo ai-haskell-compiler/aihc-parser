@@ -1,0 +1,5 @@
+extensions: []
+input: "'ab'"
+tokens:
+  - 'TkError "invalid char literal"'
+status: pass

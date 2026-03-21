@@ -1,0 +1,1195 @@
+{-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE OverloadedStrings #-}
+
+module Main (main) where
+
+import Control.Concurrent.Async (mapConcurrently)
+import Control.Exception (IOException, SomeException, displayException, try)
+import Control.Monad (when)
+import Cpp (Severity (..), diagSeverity, resultDiagnostics, resultOutput)
+import CppSupport (preprocessForParserIfEnabled)
+import Data.Char (isAlphaNum, isSpace)
+import Data.List (isPrefixOf, nub, sortBy)
+import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Text (Text)
+import qualified Data.Text as T
+import GHC.Clock (getMonotonicTimeNSec)
+import GHC.Conc (getNumProcessors)
+import qualified GhcOracle
+import HackageSupport
+  ( FileInfo (..),
+    diagToText,
+    downloadPackageQuietWithNetwork,
+    findTargetFilesFromCabal,
+    prefixCppErrors,
+    readTextFileLenient,
+    resolveIncludeBestEffort,
+  )
+import HseExtensions (fromExtensionNames)
+import qualified Language.Haskell.Exts as HSE
+import qualified Parser
+import Parser.Ast
+import Parser.Types (ParseResult (..))
+import ParserValidation (ValidationError (..), ValidationErrorKind (..), validateParserDetailed)
+import StackageProgress.Summary
+  ( FailedPackage (..),
+    PackageResult (..),
+    PackageSpec (..),
+    PromptCandidate,
+    RunSummary,
+    SummaryOptions (..),
+    addPackageResults,
+    emptySummary,
+    finalizeSummary,
+    forceString,
+    promptCandidateFromResult,
+    renderPrompt,
+    selectPromptCandidate,
+    summaryFailedPackages,
+    summaryGhcErrors,
+    summarySucceededPackages,
+    summarySuccessGhcN,
+    summarySuccessHseN,
+    summarySuccessOursN,
+  )
+import System.Directory (XdgDirectory (XdgCache), createDirectoryIfMissing, doesFileExist, getCurrentDirectory, getFileSize, getHomeDirectory, getXdgDirectory)
+import System.Environment (getArgs)
+import System.Exit (exitFailure, exitSuccess)
+import System.FilePath (takeDirectory, (</>))
+import System.IO (hFlush, hIsTerminalDevice, hPutStrLn, stderr, stdout)
+import System.Process (readProcess)
+
+data Check
+  = CheckParse
+  | CheckRoundtripGhc
+  | CheckSourceSpan
+  | CheckHse
+  | CheckGhc
+  deriving (Eq, Show)
+
+data Options = Options
+  { optSnapshot :: String,
+    optChecks :: [Check],
+    optJobs :: Maybe Int,
+    optOffline :: Bool,
+    optPrompt :: Bool,
+    optPromptSeed :: Maybe Int,
+    optPrintSucceeded :: Bool,
+    optPrintFailedTable :: Bool,
+    optSanityCheck :: Bool,
+    optGhcErrorsFile :: Maybe FilePath,
+    optGhcErrorsLimit :: Int
+  }
+
+main :: IO ()
+main = do
+  args <- getArgs
+  opts <-
+    case parseOptions args of
+      Left err -> do
+        hPutStrLn stderr err
+        hPutStrLn stderr usage
+        exitFailure
+      Right parsed -> pure parsed
+
+  snapshotResult <- loadStackageSnapshotWithMode (optSnapshot opts) (optOffline opts)
+  packages <-
+    case snapshotResult of
+      Left err -> do
+        hPutStrLn stderr ("Failed to load snapshot: " ++ err)
+        exitFailure
+      Right specs -> pure specs
+
+  let total = length packages
+  jobs <- maybe getNumProcessors pure (optJobs opts)
+  isStdoutTerminal <- hIsTerminalDevice stdout
+  let showProgress = isStdoutTerminal && not (optPrompt opts)
+  when showProgress (putProgressLine (ProgressState 0 0 total))
+  promptTemplate <-
+    if optPrompt opts
+      then loadPromptTemplate
+      else pure ""
+  (summary, promptCandidates) <-
+    foldConcurrentlyChunksWithProgress
+      jobs
+      (runPackage opts)
+      packages
+      total
+      showProgress
+      (summaryOptions opts)
+      (optPrompt opts)
+  let successOursN = summarySuccessOursN summary
+      successHseN = summarySuccessHseN summary
+      successGhcN = summarySuccessGhcN summary
+  when showProgress (putStrLn "")
+
+  when (optPrompt opts) $ do
+    candidate <- pickPromptCandidate (optPromptSeed opts) promptCandidates
+    case candidate of
+      Nothing -> do
+        hPutStrLn stderr "No parser failures found in this snapshot; no prompt generated."
+        exitFailure
+      Just selected -> do
+        putStr (renderPrompt promptTemplate selected)
+        exitSuccess
+
+  when (optPrintSucceeded opts) $ do
+    mapM_ putStrLn (summarySucceededPackages summary)
+    putStrLn ""
+
+  putStrLn "Parsing success rates:"
+  putStrLn $ "  AIHC: " ++ show successOursN ++ " / " ++ show total ++ " (" ++ show (pct successOursN total) ++ "%)"
+  when (optSanityCheck opts) $ do
+    putStrLn $ "  HSE:  " ++ show successHseN ++ " / " ++ show total ++ " (" ++ show (pct successHseN total) ++ "%)"
+  putStrLn $ "  GHC:  " ++ show successGhcN ++ " / " ++ show total ++ " (" ++ show (pct successGhcN total) ++ "%)"
+
+  case optGhcErrorsFile opts of
+    Nothing -> pure ()
+    Just path -> do
+      home <- getHomeDirectory
+      let sanitize = T.unpack . T.replace (T.pack home) "$HOME" . T.pack
+          ghcErrors =
+            take
+              (optGhcErrorsLimit opts)
+              [(pkg, sanitize err) | (pkg, err) <- summaryGhcErrors summary]
+      writeFile path $ unlines ["=== " ++ pkg ++ " ===\n" ++ err ++ "\n" | (pkg, err) <- ghcErrors]
+      putStrLn $ "GHC errors written to " ++ path
+
+  when (optPrintFailedTable opts) $ do
+    let failed =
+          sortBy
+            (\a b -> compare (failedPackageSourceSize a, failedPackageName a) (failedPackageSourceSize b, failedPackageName b))
+            (summaryFailedPackages summary)
+        col1 = "Package"
+        col2 = "Size (bytes)"
+        pkgWidth = max (length col1) $ case failed of
+          [] -> 0
+          rs -> maximum (map (length . failedPackageName) rs)
+        sizeWidth = max (length col2) $ case failed of
+          [] -> 0
+          rs -> maximum (map (length . show . failedPackageSourceSize) rs)
+        padL n s = s ++ replicate (n - length s) ' '
+        padR n s = replicate (n - length s) ' ' ++ s
+    putStrLn (padL pkgWidth col1 ++ "  " ++ padR sizeWidth col2)
+    putStrLn (replicate (pkgWidth + 2 + sizeWidth) '-')
+    mapM_ (\r -> putStrLn (padL pkgWidth (failedPackageName r) ++ "  " ++ padR sizeWidth (show (failedPackageSourceSize r)))) failed
+
+  if successOursN == total then exitSuccess else exitFailure
+
+usage :: String
+usage =
+  unlines
+    [ "Usage: cabal run stackage-progress -- [--snapshot lts-24.33] [--checks parse,roundtrip-ghc,source-span] [--jobs N] [--offline] [--prompt] [--prompt-seed N] [--print-succeeded] [--print-failed-table] [--sanity-check]",
+      "",
+      "Defaults:",
+      "  --snapshot lts-24.33",
+      "  --checks parse",
+      "  --jobs <num processors>",
+      "  --offline false",
+      "  --prompt false",
+      "  --prompt-seed <monotonic clock>",
+      "  --print-succeeded false",
+      "  --print-failed-table false",
+      "  --sanity-check false",
+      "  --ghc-errors-file <path>",
+      "  --ghc-errors-limit 100"
+    ]
+
+parseOptions :: [String] -> Either String Options
+parseOptions = go (Options "lts-24.33" [CheckParse] Nothing False False Nothing False False False Nothing 100)
+  where
+    go opts [] =
+      let opts' =
+            if optSanityCheck opts
+              then opts {optChecks = nub (optChecks opts ++ [CheckHse, CheckGhc])}
+              else opts
+       in Right opts'
+    go opts ("--snapshot" : value : rest)
+      | null value = Left "--snapshot requires a value"
+      | otherwise = go opts {optSnapshot = value} rest
+    go opts ("--checks" : value : rest) = do
+      checks <- parseChecks value
+      go opts {optChecks = checks} rest
+    go opts ("--jobs" : value : rest) =
+      case reads value of
+        [(n, "")] | n > 0 -> go opts {optJobs = Just n} rest
+        _ -> Left "--jobs must be a positive integer"
+    go opts ("--offline" : rest) =
+      go opts {optOffline = True} rest
+    go opts ("--prompt" : rest) =
+      go opts {optPrompt = True} rest
+    go opts ("--prompt-seed" : value : rest) =
+      case reads value of
+        [(n, "")] -> go opts {optPrompt = True, optPromptSeed = Just n} rest
+        _ -> Left "--prompt-seed must be an integer"
+    go opts ("--print-succeeded" : rest) =
+      go opts {optPrintSucceeded = True} rest
+    go opts ("--print-failed-table" : rest) =
+      go opts {optPrintFailedTable = True} rest
+    go opts ("--sanity-check" : rest) =
+      go opts {optSanityCheck = True} rest
+    go opts ("--ghc-errors-file" : path : rest) =
+      go opts {optGhcErrorsFile = Just path} rest
+    go opts ("--ghc-errors-limit" : value : rest) =
+      case reads value of
+        [(n, "")] | n >= 0 -> go opts {optGhcErrorsLimit = n} rest
+        _ -> Left "--ghc-errors-limit must be a non-negative integer"
+    go _ ("--help" : _) = Left ""
+    go _ (arg : _) = Left ("Unknown argument: " ++ arg)
+
+totalSourceSize :: [FileInfo] -> IO Integer
+totalSourceSize infos = sum <$> mapM (safeFileSize . fileInfoPath) infos
+  where
+    safeFileSize path = do
+      r <- try (getFileSize path) :: IO (Either IOException Integer)
+      pure $ case r of
+        Left _ -> 0
+        Right n -> n
+
+parseChecks :: String -> Either String [Check]
+parseChecks raw = do
+  checks <- mapM parseCheck (splitComma raw)
+  let uniq = nub checks
+  if null uniq
+    then Left "--checks cannot be empty"
+    else Right uniq
+
+parseCheck :: String -> Either String Check
+parseCheck raw =
+  case trim raw of
+    "parse" -> Right CheckParse
+    "roundtrip-ghc" -> Right CheckRoundtripGhc
+    "source-span" -> Right CheckSourceSpan
+    other -> Left ("Unknown check: " ++ other)
+
+splitComma :: String -> [String]
+splitComma s =
+  case break (== ',') s of
+    (chunk, []) -> [chunk]
+    (chunk, _ : rest) -> chunk : splitComma rest
+
+trim :: String -> String
+trim = dropWhileEnd isSpace . dropWhile isSpace
+
+dropWhileEnd :: (a -> Bool) -> [a] -> [a]
+dropWhileEnd p = reverse . dropWhile p . reverse
+
+loadStackageSnapshotWithMode :: String -> Bool -> IO (Either String [PackageSpec])
+loadStackageSnapshotWithMode snapshot offline = do
+  cacheFile <- snapshotCacheFile snapshot
+  hasCache <- doesFileExist cacheFile
+  if hasCache
+    then do
+      cachedBody <- readFile cacheFile
+      pure (parseSnapshotConstraints cachedBody)
+    else
+      if offline
+        then pure (Left ("Snapshot missing from cache in offline mode: " ++ snapshot))
+        else do
+          let url = "https://www.stackage.org/" ++ snapshot ++ "/cabal.config"
+          fetched <- try (readProcess "curl" ["-s", "-f", url] "")
+          case fetched of
+            Left err -> pure (Left (displayException (err :: SomeException)))
+            Right body ->
+              case parseSnapshotConstraints body of
+                Left parseErr -> pure (Left parseErr)
+                Right specs -> do
+                  writeFile cacheFile body
+                  pure (Right specs)
+
+snapshotCacheFile :: String -> IO FilePath
+snapshotCacheFile snapshot = do
+  base <- getXdgDirectory XdgCache "aihc"
+  let dir = base </> "stackage"
+      file = sanitizeSnapshotName snapshot ++ "-cabal.config"
+  createDirectoryIfMissing True dir
+  pure (dir </> file)
+
+sanitizeSnapshotName :: String -> String
+sanitizeSnapshotName = map sanitizeChar
+  where
+    sanitizeChar c
+      | isAlphaNum c || c == '-' || c == '_' = c
+      | otherwise = '_'
+
+parseSnapshotConstraints :: String -> Either String [PackageSpec]
+parseSnapshotConstraints content = do
+  let section = constraintLines (lines content)
+      entries = map trim (splitComma (concat section))
+      specs = mapMaybe parseConstraint entries
+  if null specs
+    then Left "No package constraints found"
+    else Right specs
+
+constraintLines :: [String] -> [String]
+constraintLines ls =
+  case break (isPrefixOf "constraints:" . trimLeft) ls of
+    (_, []) -> []
+    (_, firstRaw : restRaw) ->
+      let firstLine = trimLeft firstRaw
+          start = [drop 12 firstLine]
+          cont = [trimLeft line | line <- takeWhile isConstraintContinuation restRaw]
+       in start <> cont
+
+isConstraintContinuation :: String -> Bool
+isConstraintContinuation line =
+  case line of
+    c : _ -> isSpace c
+    [] -> False
+
+trimLeft :: String -> String
+trimLeft = dropWhile isSpace
+
+parseConstraint :: String -> Maybe PackageSpec
+parseConstraint entry
+  | null entry = Nothing
+  | "--" `isPrefixOf` trim entry = Nothing
+  | otherwise =
+      case breakOn "==" entry of
+        Just (name, ver) -> Just (PackageSpec (trim name) (trim ver))
+        Nothing ->
+          let ws = words entry
+           in case ws of
+                -- Snapshot constraints like "base installed" refer to compiler-provided
+                -- packages and do not map to downloadable Hackage tarballs.
+                [_, "installed"] -> Nothing
+                _ -> Nothing
+
+breakOn :: String -> String -> Maybe (String, String)
+breakOn needle haystack =
+  case findNeedle needle haystack of
+    Nothing -> Nothing
+    Just i ->
+      let (left, right) = splitAt i haystack
+       in Just (left, drop (length needle) right)
+
+findNeedle :: String -> String -> Maybe Int
+findNeedle needle = go 0
+  where
+    go _ [] = Nothing
+    go i xs
+      | needle `isPrefixOf` xs = Just i
+      | otherwise = go (i + 1) (drop 1 xs)
+
+runPackage :: Options -> PackageSpec -> IO PackageResult
+runPackage opts spec = do
+  result <- try (runPackageOrThrow opts spec)
+  pure $ case result of
+    Left err ->
+      PackageResult
+        { package = spec,
+          packageOursOk = False,
+          packageHseOk = False,
+          packageGhcOk = False,
+          packageReason = displayException (err :: SomeException),
+          packageGhcError = Nothing,
+          packageSourceSize = 0
+        }
+    Right pkgResult -> pkgResult
+
+runPackageOrThrow :: Options -> PackageSpec -> IO PackageResult
+runPackageOrThrow opts spec = do
+  if pkgVersion spec == "installed"
+    then
+      pure
+        PackageResult
+          { package = spec,
+            packageOursOk = False,
+            packageHseOk = False,
+            packageGhcOk = False,
+            packageReason = "installed package has no downloadable snapshot version",
+            packageGhcError = Nothing,
+            packageSourceSize = 0
+          }
+    else do
+      srcDir <- downloadPackageQuietWithNetwork (not (optOffline opts)) (pkgName spec) (pkgVersion spec)
+      files <- findTargetFilesFromCabal srcDir
+      totalSize <- if optPrintFailedTable opts then totalSourceSize files else pure 0
+      if null files
+        then
+          pure
+            PackageResult
+              { package = spec,
+                packageOursOk = True,
+                packageHseOk = True,
+                packageGhcOk = True,
+                packageReason = "",
+                packageGhcError = Nothing,
+                packageSourceSize = totalSize
+              }
+        else do
+          fileSummary <- foldFilesForPackage opts srcDir emptyFileSummary files
+          let hseOk = packageFileHseOk fileSummary
+              ghcOk = packageFileGhcOk fileSummary
+              ghcError = packageFileGhcError fileSummary
+              oursOk = packageFileOursOk fileSummary
+          if oursOk
+            then
+              pure
+                PackageResult
+                  { package = spec,
+                    packageOursOk = True,
+                    packageHseOk = hseOk,
+                    packageGhcOk = ghcOk,
+                    packageReason = "",
+                    packageGhcError = ghcError,
+                    packageSourceSize = totalSize
+                  }
+            else
+              pure
+                PackageResult
+                  { package = spec,
+                    packageOursOk = False,
+                    packageHseOk = hseOk,
+                    packageGhcOk = ghcOk,
+                    packageReason = firstFailureMessage fileSummary,
+                    packageGhcError = ghcError,
+                    packageSourceSize = totalSize
+                  }
+
+data FileResult = FileResult
+  { fileOursOk :: Bool,
+    fileHseOk :: Bool,
+    fileGhcOk :: Bool,
+    fileError :: Maybe String,
+    fileGhcError :: Maybe String
+  }
+
+data PackageFileSummary = PackageFileSummary
+  { packageFileOursOk :: !Bool,
+    packageFileHseOk :: !Bool,
+    packageFileGhcOk :: !Bool,
+    packageFileFirstFailure :: Maybe String,
+    packageFileGhcError :: Maybe String
+  }
+
+emptyFileSummary :: PackageFileSummary
+emptyFileSummary =
+  PackageFileSummary
+    { packageFileOursOk = True,
+      packageFileHseOk = True,
+      packageFileGhcOk = True,
+      packageFileFirstFailure = Nothing,
+      packageFileGhcError = Nothing
+    }
+
+checkAndAccumulateFile :: Options -> FilePath -> PackageFileSummary -> FileInfo -> IO PackageFileSummary
+checkAndAccumulateFile opts packageRoot summary info = do
+  result <- checkFile opts packageRoot info
+  let !oursOk = packageFileOursOk summary && fileOursOk result
+      !hseOk = packageFileHseOk summary && fileHseOk result
+      !ghcOk = packageFileGhcOk summary && fileGhcOk result
+      firstFailure =
+        case packageFileFirstFailure summary of
+          Just err -> Just err
+          Nothing ->
+            case fileError result of
+              Just err -> Just (forceString err)
+              Nothing ->
+                if fileOursOk result
+                  then Nothing
+                  else Just "ours failed"
+      ghcError =
+        case packageFileGhcError summary of
+          Just err -> Just err
+          Nothing -> fmap forceString (fileGhcError result)
+  pure
+    PackageFileSummary
+      { packageFileOursOk = oursOk,
+        packageFileHseOk = hseOk,
+        packageFileGhcOk = ghcOk,
+        packageFileFirstFailure = firstFailure,
+        packageFileGhcError = ghcError
+      }
+
+firstFailureMessage :: PackageFileSummary -> String
+firstFailureMessage summary =
+  fromMaybe "unknown failure" (packageFileFirstFailure summary)
+
+foldFilesForPackage :: Options -> FilePath -> PackageFileSummary -> [FileInfo] -> IO PackageFileSummary
+foldFilesForPackage _ _ summary [] = pure summary
+foldFilesForPackage opts packageRoot summary (info : rest)
+  | shouldStopAfterFailure opts summary = pure summary
+  | otherwise = do
+      summary' <- checkAndAccumulateFile opts packageRoot summary info
+      foldFilesForPackage opts packageRoot summary' rest
+
+shouldStopAfterFailure :: Options -> PackageFileSummary -> Bool
+shouldStopAfterFailure opts summary =
+  not (packageFileOursOk summary) && not (needsFullPackageScan opts)
+
+needsFullPackageScan :: Options -> Bool
+needsFullPackageScan opts =
+  CheckHse `elem` optChecks opts || CheckGhc `elem` optChecks opts
+
+checkFile :: Options -> FilePath -> FileInfo -> IO FileResult
+checkFile opts packageRoot info = do
+  let file = fileInfoPath info
+  source <- readTextFileLenient file
+  preprocessed <- preprocessForParserIfEnabled (fileInfoExtensions info) (fileInfoCppOptions info) file (resolveIncludeBestEffort packageRoot file) source
+  let source' = resultOutput preprocessed
+      cppErrors = [diagToText diag | diag <- resultDiagnostics preprocessed, diagSeverity diag == Error]
+      cppErrorMsg =
+        if null cppErrors
+          then Nothing
+          else Just (T.intercalate "\n" cppErrors)
+      oursResult = Parser.parseModule Parser.defaultConfig source'
+
+  oursStatus <- case oursResult of
+    ParseErr err ->
+      if CheckParse `elem` optChecks opts || needsParsedModule (optChecks opts)
+        then pure (Left (T.unpack (prefixCppErrors cppErrorMsg ("parse failed in " <> T.pack file <> ": " <> T.pack (show err)))))
+        else pure (Right ())
+    ParseOk parsed -> do
+      roundtripRes <-
+        if CheckRoundtripGhc `elem` optChecks opts
+          then pure (checkRoundtrip file cppErrorMsg source')
+          else pure (Right ())
+      case roundtripRes of
+        Left err -> pure (Left err)
+        Right () ->
+          if CheckSourceSpan `elem` optChecks opts
+            then pure (checkSourceSpans file source' parsed)
+            else pure (Right ())
+
+  hseOk <-
+    if CheckHse `elem` optChecks opts
+      then pure $ checkHse (fileInfoExtensions info) (fileInfoLanguage info) source'
+      else pure True
+
+  ghcOkResult <-
+    if CheckGhc `elem` optChecks opts
+      then pure $ GhcOracle.oracleDetailedParsesModuleWithNamesAt file (fileInfoExtensions info) (fileInfoLanguage info) source'
+      else pure (Right ())
+  let ghcOk = case ghcOkResult of Right () -> True; Left _ -> False
+      ghcErrMsg = case ghcOkResult of Left err -> Just (T.unpack err); Right () -> Nothing
+
+  pure
+    FileResult
+      { fileOursOk = case oursStatus of Right () -> True; Left _ -> False,
+        fileHseOk = hseOk,
+        fileGhcOk = ghcOk,
+        fileError = case oursStatus of Left err -> Just err; Right () -> Nothing,
+        fileGhcError = ghcErrMsg
+      }
+
+checkHse :: [String] -> Maybe String -> Text -> Bool
+checkHse extNames _langName source =
+  let mode = hseParseMode {HSE.extensions = fromExtensionNames extNames}
+   in case HSE.parseFileContentsWithMode mode (T.unpack source) of
+        HSE.ParseOk _ -> True
+        HSE.ParseFailed _ _ -> False
+
+hseParseMode :: HSE.ParseMode
+hseParseMode =
+  HSE.defaultParseMode
+    { HSE.parseFilename = "<stackage-progress>",
+      HSE.extensions = []
+    }
+
+needsParsedModule :: [Check] -> Bool
+needsParsedModule checks =
+  CheckRoundtripGhc `elem` checks || CheckSourceSpan `elem` checks
+
+checkRoundtrip :: FilePath -> Maybe Text -> Text -> Either String ()
+checkRoundtrip file cppErrorMsg source' =
+  case validateParserDetailed source' of
+    Nothing -> Right ()
+    Just err ->
+      case validationErrorKind err of
+        ValidationParseError ->
+          Left (T.unpack (prefixCppErrors cppErrorMsg ("parse failed in " <> T.pack file <> ": " <> T.pack (validationErrorMessage err))))
+        ValidationRoundtripError ->
+          Left (T.unpack (prefixCppErrors cppErrorMsg ("roundtrip mismatch in " <> T.pack file <> ": " <> T.pack (validationErrorMessage err))))
+
+checkSourceSpans :: FilePath -> Text -> Module -> Either String ()
+checkSourceSpans file source modu =
+  let exprs = [expr | expr <- collectModuleExprs modu, hasRealSourceSpan (exprSpan expr)]
+   in case firstLeft (map (validateExprSpan source) exprs) of
+        Nothing -> Right ()
+        Just err -> Left (file ++ ": " ++ err)
+
+validateExprSpan :: Text -> Expr -> Either String ()
+validateExprSpan source expr = do
+  snippet <- extractSpanText source (exprSpan expr)
+  case Parser.parseExpr Parser.defaultConfig snippet of
+    ParseErr err -> Left ("source-span parse failed for span " ++ show (exprSpan expr) ++ ": " ++ show err)
+    ParseOk reparsed ->
+      if stripExpr reparsed == stripExpr expr
+        then Right ()
+        else Left ("source-span mismatch at " ++ show (exprSpan expr))
+
+firstLeft :: [Either a b] -> Maybe a
+firstLeft [] = Nothing
+firstLeft (x : xs) =
+  case x of
+    Left err -> Just err
+    Right _ -> firstLeft xs
+
+hasRealSourceSpan :: SourceSpan -> Bool
+hasRealSourceSpan span' =
+  case span' of
+    SourceSpan {} -> True
+    NoSourceSpan -> False
+
+extractSpanText :: Text -> SourceSpan -> Either String Text
+extractSpanText input span' =
+  case span' of
+    NoSourceSpan -> Left "missing source span"
+    SourceSpan sLine sCol eLine eCol
+      | sLine <= 0 || sCol <= 0 || eLine <= 0 || eCol <= 0 -> Left "invalid non-positive span coordinates"
+      | (eLine, eCol) < (sLine, sCol) -> Left "invalid reversed span"
+      | otherwise ->
+          let ls = T.splitOn "\n" input
+           in if sLine > length ls || eLine > length ls
+                then Left "span exceeds input line count"
+                else
+                  let lineAt n = ls !! (n - 1)
+                      startLine = lineAt sLine
+                      endLine = lineAt eLine
+                   in if sLine == eLine
+                        then
+                          let startIx = sCol - 1
+                              len = eCol - sCol
+                           in if startIx < 0 || len < 0 || startIx + len > T.length startLine
+                                then Left "single-line span exceeds line bounds"
+                                else Right (T.take len (T.drop startIx startLine))
+                        else
+                          let startIx = sCol - 1
+                              endIx = eCol - 1
+                              firstPart = T.drop startIx startLine
+                              middleParts = [lineAt n | n <- [sLine + 1 .. eLine - 1]]
+                              lastPart = T.take endIx endLine
+                           in if startIx < 0 || endIx < 0 || startIx > T.length startLine || endIx > T.length endLine
+                                then Left "multi-line span exceeds line bounds"
+                                else Right (T.intercalate "\n" (firstPart : middleParts <> [lastPart]))
+
+exprSpan :: Expr -> SourceSpan
+exprSpan expr =
+  case expr of
+    EVar span' _ -> span'
+    EInt span' _ _ -> span'
+    EIntBase span' _ _ -> span'
+    EFloat span' _ _ -> span'
+    EChar span' _ _ -> span'
+    EString span' _ _ -> span'
+    EQuasiQuote span' _ _ -> span'
+    EIf span' _ _ _ -> span'
+    ELambdaPats span' _ _ -> span'
+    ELambdaCase span' _ -> span'
+    EInfix span' _ _ _ -> span'
+    ENegate span' _ -> span'
+    ESectionL span' _ _ -> span'
+    ESectionR span' _ _ -> span'
+    ELetDecls span' _ _ -> span'
+    ECase span' _ _ -> span'
+    EDo span' _ -> span'
+    EListComp span' _ _ -> span'
+    EListCompParallel span' _ _ -> span'
+    EArithSeq span' _ -> span'
+    ERecordCon span' _ _ -> span'
+    ERecordUpd span' _ _ -> span'
+    ETypeSig span' _ _ -> span'
+    EParen span' _ -> span'
+    EWhereDecls span' _ _ -> span'
+    EList span' _ -> span'
+    ETuple span' _ -> span'
+    ETupleSection span' _ -> span'
+    ETupleCon span' _ -> span'
+    ETypeApp span' _ _ -> span'
+    EApp span' _ _ -> span'
+
+collectModuleExprs :: Module -> [Expr]
+collectModuleExprs modu = concatMap collectDeclExprs (moduleDecls modu)
+
+collectDeclExprs :: Decl -> [Expr]
+collectDeclExprs decl =
+  case decl of
+    DeclValue _ valueDecl -> collectValueDeclExprs valueDecl
+    DeclClass _ classDecl -> concatMap collectClassDeclItemExprs (classDeclItems classDecl)
+    DeclInstance _ instDecl -> concatMap collectInstanceDeclItemExprs (instanceDeclItems instDecl)
+    _ -> []
+
+collectClassDeclItemExprs :: ClassDeclItem -> [Expr]
+collectClassDeclItemExprs item =
+  case item of
+    ClassItemDefault _ valueDecl -> collectValueDeclExprs valueDecl
+    _ -> []
+
+collectInstanceDeclItemExprs :: InstanceDeclItem -> [Expr]
+collectInstanceDeclItemExprs item =
+  case item of
+    InstanceItemBind _ valueDecl -> collectValueDeclExprs valueDecl
+    _ -> []
+
+collectValueDeclExprs :: ValueDecl -> [Expr]
+collectValueDeclExprs valueDecl =
+  case valueDecl of
+    FunctionBind _ _ matches -> concatMap collectMatchExprs matches
+    PatternBind _ pat rhs -> collectPatternExprs pat <> collectRhsExprs rhs
+
+collectMatchExprs :: Match -> [Expr]
+collectMatchExprs match =
+  concatMap collectPatternExprs (matchPats match)
+    <> collectRhsExprs (matchRhs match)
+
+collectRhsExprs :: Rhs -> [Expr]
+collectRhsExprs rhs =
+  case rhs of
+    UnguardedRhs _ expr -> collectExprTree expr
+    GuardedRhss _ guarded -> concatMap collectGuardedRhsExprs guarded
+
+collectGuardedRhsExprs :: GuardedRhs -> [Expr]
+collectGuardedRhsExprs guarded =
+  concatMap collectGuardQualifierExprs (guardedRhsGuards guarded)
+    <> collectExprTree (guardedRhsBody guarded)
+
+collectGuardQualifierExprs :: GuardQualifier -> [Expr]
+collectGuardQualifierExprs qualifier =
+  case qualifier of
+    GuardExpr _ expr -> collectExprTree expr
+    GuardPat _ pat expr -> collectPatternExprs pat <> collectExprTree expr
+    GuardLet _ decls -> concatMap collectDeclExprs decls
+
+collectPatternExprs :: Pattern -> [Expr]
+collectPatternExprs pat =
+  case pat of
+    PView _ viewExpr inner -> collectExprTree viewExpr <> collectPatternExprs inner
+    PCon _ _ pats -> concatMap collectPatternExprs pats
+    PInfix _ left _ right -> collectPatternExprs left <> collectPatternExprs right
+    PAs _ _ inner -> collectPatternExprs inner
+    PStrict _ inner -> collectPatternExprs inner
+    PIrrefutable _ inner -> collectPatternExprs inner
+    PParen _ inner -> collectPatternExprs inner
+    PRecord _ _ fields -> concatMap (collectPatternExprs . snd) fields
+    PTuple _ pats -> concatMap collectPatternExprs pats
+    PList _ pats -> concatMap collectPatternExprs pats
+    _ -> []
+
+collectExprTree :: Expr -> [Expr]
+collectExprTree expr =
+  expr
+    : case expr of
+      EIf _ c t e -> collectExprTree c <> collectExprTree t <> collectExprTree e
+      ELambdaPats _ pats body -> concatMap collectPatternExprs pats <> collectExprTree body
+      ELambdaCase _ alts -> concatMap collectCaseAltExprs alts
+      EInfix _ l _ r -> collectExprTree l <> collectExprTree r
+      ENegate _ e -> collectExprTree e
+      ESectionL _ e _ -> collectExprTree e
+      ESectionR _ _ e -> collectExprTree e
+      ELetDecls _ decls body -> concatMap collectDeclExprs decls <> collectExprTree body
+      ECase _ scrutinee alts -> collectExprTree scrutinee <> concatMap collectCaseAltExprs alts
+      EDo _ stmts -> concatMap collectDoStmtExprs stmts
+      EListComp _ body stmts -> collectExprTree body <> concatMap collectCompStmtExprs stmts
+      EListCompParallel _ body stmtGroups ->
+        collectExprTree body <> concatMap (concatMap collectCompStmtExprs) stmtGroups
+      EArithSeq _ seqExpr -> collectArithSeqExprs seqExpr
+      ERecordCon _ _ fields -> concatMap (collectExprTree . snd) fields
+      ERecordUpd _ base fields -> collectExprTree base <> concatMap (collectExprTree . snd) fields
+      ETypeSig _ e _ -> collectExprTree e
+      EParen _ e -> collectExprTree e
+      EWhereDecls _ e decls -> collectExprTree e <> concatMap collectDeclExprs decls
+      EList _ es -> concatMap collectExprTree es
+      ETuple _ es -> concatMap collectExprTree es
+      ETypeApp _ e _ -> collectExprTree e
+      EApp _ f x -> collectExprTree f <> collectExprTree x
+      _ -> []
+
+collectCaseAltExprs :: CaseAlt -> [Expr]
+collectCaseAltExprs alt =
+  collectPatternExprs (caseAltPattern alt)
+    <> collectRhsExprs (caseAltRhs alt)
+
+collectDoStmtExprs :: DoStmt -> [Expr]
+collectDoStmtExprs stmt =
+  case stmt of
+    DoBind _ pat expr -> collectPatternExprs pat <> collectExprTree expr
+    DoLet _ binds -> concatMap (collectExprTree . snd) binds
+    DoLetDecls _ decls -> concatMap collectDeclExprs decls
+    DoExpr _ expr -> collectExprTree expr
+
+collectCompStmtExprs :: CompStmt -> [Expr]
+collectCompStmtExprs stmt =
+  case stmt of
+    CompGen _ pat expr -> collectPatternExprs pat <> collectExprTree expr
+    CompGuard _ expr -> collectExprTree expr
+    CompLet _ binds -> concatMap (collectExprTree . snd) binds
+    CompLetDecls _ decls -> concatMap collectDeclExprs decls
+
+collectArithSeqExprs :: ArithSeq -> [Expr]
+collectArithSeqExprs seqExpr =
+  case seqExpr of
+    ArithSeqFrom _ a -> collectExprTree a
+    ArithSeqFromThen _ a b -> collectExprTree a <> collectExprTree b
+    ArithSeqFromTo _ a b -> collectExprTree a <> collectExprTree b
+    ArithSeqFromThenTo _ a b c -> collectExprTree a <> collectExprTree b <> collectExprTree c
+
+stripExpr :: Expr -> Expr
+stripExpr expr =
+  case expr of
+    EVar _ t -> EVar noSourceSpan t
+    EInt _ n repr -> EInt noSourceSpan n repr
+    EIntBase _ n txt -> EIntBase noSourceSpan n txt
+    EFloat _ d repr -> EFloat noSourceSpan d repr
+    EChar _ c repr -> EChar noSourceSpan c repr
+    EString _ s repr -> EString noSourceSpan s repr
+    EQuasiQuote _ q body -> EQuasiQuote noSourceSpan q body
+    EIf _ a b c -> EIf noSourceSpan (stripExpr a) (stripExpr b) (stripExpr c)
+    ELambdaPats _ pats e -> ELambdaPats noSourceSpan (map stripPattern pats) (stripExpr e)
+    ELambdaCase _ alts -> ELambdaCase noSourceSpan (map stripCaseAlt alts)
+    EInfix _ a op b -> EInfix noSourceSpan (stripExpr a) op (stripExpr b)
+    ENegate _ e -> ENegate noSourceSpan (stripExpr e)
+    ESectionL _ e op -> ESectionL noSourceSpan (stripExpr e) op
+    ESectionR _ op e -> ESectionR noSourceSpan op (stripExpr e)
+    ELetDecls _ decls e -> ELetDecls noSourceSpan (map stripDecl decls) (stripExpr e)
+    ECase _ e alts -> ECase noSourceSpan (stripExpr e) (map stripCaseAlt alts)
+    EDo _ stmts -> EDo noSourceSpan (map stripDoStmt stmts)
+    EListComp _ e stmts -> EListComp noSourceSpan (stripExpr e) (map stripCompStmt stmts)
+    EListCompParallel _ e groups -> EListCompParallel noSourceSpan (stripExpr e) (map (map stripCompStmt) groups)
+    EArithSeq _ a -> EArithSeq noSourceSpan (stripArithSeq a)
+    ERecordCon _ name fields -> ERecordCon noSourceSpan name [(field, stripExpr val) | (field, val) <- fields]
+    ERecordUpd _ base fields -> ERecordUpd noSourceSpan (stripExpr base) [(field, stripExpr val) | (field, val) <- fields]
+    ETypeSig _ e t -> ETypeSig noSourceSpan (stripExpr e) (stripType t)
+    EParen _ e -> EParen noSourceSpan (stripExpr e)
+    EWhereDecls _ e decls -> EWhereDecls noSourceSpan (stripExpr e) (map stripDecl decls)
+    EList _ es -> EList noSourceSpan (map stripExpr es)
+    ETuple _ es -> ETuple noSourceSpan (map stripExpr es)
+    ETupleSection _ es -> ETupleSection noSourceSpan (map (fmap stripExpr) es)
+    ETupleCon _ n -> ETupleCon noSourceSpan n
+    ETypeApp _ e t -> ETypeApp noSourceSpan (stripExpr e) (stripType t)
+    EApp _ f x -> EApp noSourceSpan (stripExpr f) (stripExpr x)
+
+stripDecl :: Decl -> Decl
+stripDecl decl =
+  case decl of
+    DeclValue _ value -> DeclValue noSourceSpan (stripValueDecl value)
+    DeclTypeSig _ names t -> DeclTypeSig noSourceSpan names (stripType t)
+    DeclStandaloneKindSig _ name kind -> DeclStandaloneKindSig noSourceSpan name (stripType kind)
+    DeclFixity _ assoc prec ops -> DeclFixity noSourceSpan assoc prec ops
+    DeclTypeSyn _ syn -> DeclTypeSyn noSourceSpan (stripTypeSynDecl syn)
+    DeclData _ dat -> DeclData noSourceSpan (stripDataDecl dat)
+    DeclNewtype _ nt -> DeclNewtype noSourceSpan (stripNewtypeDecl nt)
+    DeclClass _ cls -> DeclClass noSourceSpan (stripClassDecl cls)
+    DeclInstance _ inst -> DeclInstance noSourceSpan (stripInstanceDecl inst)
+    DeclDefault _ tys -> DeclDefault noSourceSpan (map stripType tys)
+    DeclForeign _ foreignDecl -> DeclForeign noSourceSpan (stripForeignDecl foreignDecl)
+
+stripValueDecl :: ValueDecl -> ValueDecl
+stripValueDecl valueDecl =
+  case valueDecl of
+    FunctionBind _ name matches -> FunctionBind noSourceSpan name (map stripMatch matches)
+    PatternBind _ pat rhs -> PatternBind noSourceSpan (stripPattern pat) (stripRhs rhs)
+
+stripMatch :: Match -> Match
+stripMatch match =
+  Match
+    { matchSpan = noSourceSpan,
+      matchPats = map stripPattern (matchPats match),
+      matchRhs = stripRhs (matchRhs match)
+    }
+
+stripRhs :: Rhs -> Rhs
+stripRhs rhs =
+  case rhs of
+    UnguardedRhs _ expr -> UnguardedRhs noSourceSpan (stripExpr expr)
+    GuardedRhss _ guarded -> GuardedRhss noSourceSpan (map stripGuardedRhs guarded)
+
+stripGuardedRhs :: GuardedRhs -> GuardedRhs
+stripGuardedRhs guarded =
+  GuardedRhs
+    { guardedRhsSpan = noSourceSpan,
+      guardedRhsGuards = map stripGuardQualifier (guardedRhsGuards guarded),
+      guardedRhsBody = stripExpr (guardedRhsBody guarded)
+    }
+
+stripGuardQualifier :: GuardQualifier -> GuardQualifier
+stripGuardQualifier qualifier =
+  case qualifier of
+    GuardExpr _ expr -> GuardExpr noSourceSpan (stripExpr expr)
+    GuardPat _ pat expr -> GuardPat noSourceSpan (stripPattern pat) (stripExpr expr)
+    GuardLet _ decls -> GuardLet noSourceSpan (map stripDecl decls)
+
+stripPattern :: Pattern -> Pattern
+stripPattern pat =
+  case pat of
+    PVar _ n -> PVar noSourceSpan n
+    PWildcard _ -> PWildcard noSourceSpan
+    PLit _ lit -> PLit noSourceSpan (stripLiteral lit)
+    PQuasiQuote _ q body -> PQuasiQuote noSourceSpan q body
+    PTuple _ pats -> PTuple noSourceSpan (map stripPattern pats)
+    PList _ pats -> PList noSourceSpan (map stripPattern pats)
+    PCon _ name pats -> PCon noSourceSpan name (map stripPattern pats)
+    PInfix _ a op b -> PInfix noSourceSpan (stripPattern a) op (stripPattern b)
+    PView _ expr inner -> PView noSourceSpan (stripExpr expr) (stripPattern inner)
+    PAs _ n inner -> PAs noSourceSpan n (stripPattern inner)
+    PStrict _ inner -> PStrict noSourceSpan (stripPattern inner)
+    PIrrefutable _ inner -> PIrrefutable noSourceSpan (stripPattern inner)
+    PNegLit _ lit -> PNegLit noSourceSpan (stripLiteral lit)
+    PParen _ inner -> PParen noSourceSpan (stripPattern inner)
+    PRecord _ name fields -> PRecord noSourceSpan name [(field, stripPattern value) | (field, value) <- fields]
+
+stripLiteral :: Literal -> Literal
+stripLiteral lit =
+  case lit of
+    LitInt _ i repr -> LitInt noSourceSpan i repr
+    LitIntBase _ i txt -> LitIntBase noSourceSpan i txt
+    LitFloat _ d repr -> LitFloat noSourceSpan d repr
+    LitChar _ c repr -> LitChar noSourceSpan c repr
+    LitString _ s repr -> LitString noSourceSpan s repr
+
+stripType :: Type -> Type
+stripType ty =
+  case ty of
+    TVar _ n -> TVar noSourceSpan n
+    TCon _ n -> TCon noSourceSpan n
+    TStar _ -> TStar noSourceSpan
+    TQuasiQuote _ q body -> TQuasiQuote noSourceSpan q body
+    TForall _ binders inner -> TForall noSourceSpan binders (stripType inner)
+    TApp _ a b -> TApp noSourceSpan (stripType a) (stripType b)
+    TFun _ a b -> TFun noSourceSpan (stripType a) (stripType b)
+    TTuple _ tys -> TTuple noSourceSpan (map stripType tys)
+    TList _ t -> TList noSourceSpan (stripType t)
+    TParen _ t -> TParen noSourceSpan (stripType t)
+    TContext _ constraints t -> TContext noSourceSpan (map stripConstraint constraints) (stripType t)
+
+stripConstraint :: Constraint -> Constraint
+stripConstraint c =
+  Constraint
+    { constraintSpan = noSourceSpan,
+      constraintClass = constraintClass c,
+      constraintArgs = map stripType (constraintArgs c),
+      constraintParen = constraintParen c
+    }
+
+stripTypeSynDecl :: TypeSynDecl -> TypeSynDecl
+stripTypeSynDecl d =
+  TypeSynDecl
+    { typeSynSpan = noSourceSpan,
+      typeSynName = typeSynName d,
+      typeSynParams = map stripTyVarBinder (typeSynParams d),
+      typeSynBody = stripType (typeSynBody d)
+    }
+
+stripDataDecl :: DataDecl -> DataDecl
+stripDataDecl d =
+  DataDecl
+    { dataDeclSpan = noSourceSpan,
+      dataDeclContext = map stripConstraint (dataDeclContext d),
+      dataDeclName = dataDeclName d,
+      dataDeclParams = map stripTyVarBinder (dataDeclParams d),
+      dataDeclConstructors = map stripDataConDecl (dataDeclConstructors d),
+      dataDeclDeriving = dataDeclDeriving d
+    }
+
+stripNewtypeDecl :: NewtypeDecl -> NewtypeDecl
+stripNewtypeDecl d =
+  NewtypeDecl
+    { newtypeDeclSpan = noSourceSpan,
+      newtypeDeclContext = map stripConstraint (newtypeDeclContext d),
+      newtypeDeclName = newtypeDeclName d,
+      newtypeDeclParams = map stripTyVarBinder (newtypeDeclParams d),
+      newtypeDeclConstructor = fmap stripDataConDecl (newtypeDeclConstructor d),
+      newtypeDeclDeriving = newtypeDeclDeriving d
+    }
+
+stripTyVarBinder :: TyVarBinder -> TyVarBinder
+stripTyVarBinder b =
+  TyVarBinder
+    { tyVarBinderSpan = noSourceSpan,
+      tyVarBinderName = tyVarBinderName b,
+      tyVarBinderKind = fmap stripType (tyVarBinderKind b)
+    }
+
+stripDataConDecl :: DataConDecl -> DataConDecl
+stripDataConDecl con =
+  case con of
+    PrefixCon _ forallVars context name args -> PrefixCon noSourceSpan forallVars (map stripConstraint context) name (map stripBangType args)
+    InfixCon _ forallVars context left op right -> InfixCon noSourceSpan forallVars (map stripConstraint context) (stripBangType left) op (stripBangType right)
+    RecordCon _ forallVars context name fields -> RecordCon noSourceSpan forallVars (map stripConstraint context) name (map stripFieldDecl fields)
+
+stripBangType :: BangType -> BangType
+stripBangType b =
+  BangType
+    { bangSpan = noSourceSpan,
+      bangStrict = bangStrict b,
+      bangType = stripType (bangType b)
+    }
+
+stripFieldDecl :: FieldDecl -> FieldDecl
+stripFieldDecl f =
+  FieldDecl
+    { fieldSpan = noSourceSpan,
+      fieldNames = fieldNames f,
+      fieldType = stripBangType (fieldType f)
+    }
+
+stripClassDecl :: ClassDecl -> ClassDecl
+stripClassDecl d =
+  ClassDecl
+    { classDeclSpan = noSourceSpan,
+      classDeclContext = map stripConstraint (classDeclContext d),
+      classDeclName = classDeclName d,
+      classDeclParams = map stripTyVarBinder (classDeclParams d),
+      classDeclItems = map stripClassDeclItem (classDeclItems d)
+    }
+
+stripClassDeclItem :: ClassDeclItem -> ClassDeclItem
+stripClassDeclItem item =
+  case item of
+    ClassItemTypeSig _ names t -> ClassItemTypeSig noSourceSpan names (stripType t)
+    ClassItemFixity _ assoc prec ops -> ClassItemFixity noSourceSpan assoc prec ops
+    ClassItemDefault _ value -> ClassItemDefault noSourceSpan (stripValueDecl value)
+
+stripInstanceDecl :: InstanceDecl -> InstanceDecl
+stripInstanceDecl d =
+  InstanceDecl
+    { instanceDeclSpan = noSourceSpan,
+      instanceDeclContext = map stripConstraint (instanceDeclContext d),
+      instanceDeclClassName = instanceDeclClassName d,
+      instanceDeclTypes = map stripType (instanceDeclTypes d),
+      instanceDeclItems = map stripInstanceDeclItem (instanceDeclItems d)
+    }
+
+stripInstanceDeclItem :: InstanceDeclItem -> InstanceDeclItem
+stripInstanceDeclItem item =
+  case item of
+    InstanceItemBind _ value -> InstanceItemBind noSourceSpan (stripValueDecl value)
+    InstanceItemTypeSig _ names t -> InstanceItemTypeSig noSourceSpan names (stripType t)
+    InstanceItemFixity _ assoc prec ops -> InstanceItemFixity noSourceSpan assoc prec ops
+
+stripForeignDecl :: ForeignDecl -> ForeignDecl
+stripForeignDecl d =
+  ForeignDecl
+    { foreignDeclSpan = noSourceSpan,
+      foreignDirection = foreignDirection d,
+      foreignCallConv = foreignCallConv d,
+      foreignSafety = foreignSafety d,
+      foreignEntity = foreignEntity d,
+      foreignName = foreignName d,
+      foreignType = stripType (foreignType d)
+    }
+
+stripCaseAlt :: CaseAlt -> CaseAlt
+stripCaseAlt alt =
+  CaseAlt
+    { caseAltSpan = noSourceSpan,
+      caseAltPattern = stripPattern (caseAltPattern alt),
+      caseAltRhs = stripRhs (caseAltRhs alt)
+    }
+
+stripDoStmt :: DoStmt -> DoStmt
+stripDoStmt stmt =
+  case stmt of
+    DoBind _ pat expr -> DoBind noSourceSpan (stripPattern pat) (stripExpr expr)
+    DoLet _ binds -> DoLet noSourceSpan [(name, stripExpr e) | (name, e) <- binds]
+    DoLetDecls _ decls -> DoLetDecls noSourceSpan (map stripDecl decls)
+    DoExpr _ expr -> DoExpr noSourceSpan (stripExpr expr)
+
+stripCompStmt :: CompStmt -> CompStmt
+stripCompStmt stmt =
+  case stmt of
+    CompGen _ pat expr -> CompGen noSourceSpan (stripPattern pat) (stripExpr expr)
+    CompGuard _ expr -> CompGuard noSourceSpan (stripExpr expr)
+    CompLet _ binds -> CompLet noSourceSpan [(name, stripExpr e) | (name, e) <- binds]
+    CompLetDecls _ decls -> CompLetDecls noSourceSpan (map stripDecl decls)
+
+stripArithSeq :: ArithSeq -> ArithSeq
+stripArithSeq seqExpr =
+  case seqExpr of
+    ArithSeqFrom _ a -> ArithSeqFrom noSourceSpan (stripExpr a)
+    ArithSeqFromThen _ a b -> ArithSeqFromThen noSourceSpan (stripExpr a) (stripExpr b)
+    ArithSeqFromTo _ a b -> ArithSeqFromTo noSourceSpan (stripExpr a) (stripExpr b)
+    ArithSeqFromThenTo _ a b c -> ArithSeqFromThenTo noSourceSpan (stripExpr a) (stripExpr b) (stripExpr c)
+
+foldConcurrentlyChunksWithProgress :: Int -> (a -> IO PackageResult) -> [a] -> Int -> Bool -> SummaryOptions -> Bool -> IO (RunSummary, [PromptCandidate])
+foldConcurrentlyChunksWithProgress n action items total showProgress opts collectPromptCandidates =
+  go 0 0 emptySummary [] (chunksOf chunkSize items)
+  where
+    chunkSize = if n <= 0 then 1 else n
+    go _ _ summary promptCandidatesRev [] = pure (finalizeSummary summary, reverse promptCandidatesRev)
+    go done success summary promptCandidatesRev (chunk : rest) = do
+      batch <- mapConcurrently action chunk
+      let done' = done + length batch
+          success' = success + length [() | result <- batch, packageOursOk result]
+          !summary' = addPackageResults opts batch summary
+          !promptCandidatesRev' =
+            if collectPromptCandidates
+              then reverse (mapMaybe promptCandidateFromResult batch) <> promptCandidatesRev
+              else promptCandidatesRev
+      when showProgress (putProgressLine (ProgressState done' success' total))
+      go done' success' summary' promptCandidatesRev' rest
+
+pickPromptCandidate :: Maybe Int -> [PromptCandidate] -> IO (Maybe PromptCandidate)
+pickPromptCandidate maybeSeed candidates = do
+  picker <-
+    case maybeSeed of
+      Just seed -> pure (toInteger seed)
+      Nothing -> toInteger <$> getMonotonicTimeNSec
+  pure (selectPromptCandidate picker candidates)
+
+loadPromptTemplate :: IO String
+loadPromptTemplate = do
+  cwd <- getCurrentDirectory
+  path <- findPromptTemplatePath cwd
+  case path of
+    Just promptPath -> readFile promptPath
+    Nothing -> do
+      hPutStrLn stderr ("Could not find prompt template docs/PKG_FIX_PROMPT.md (cwd: " ++ cwd ++ ")")
+      exitFailure
+
+findPromptTemplatePath :: FilePath -> IO (Maybe FilePath)
+findPromptTemplatePath = go
+  where
+    go dir = do
+      let candidate = dir </> "docs" </> "PKG_FIX_PROMPT.md"
+      exists <- doesFileExist candidate
+      if exists
+        then pure (Just candidate)
+        else
+          let parent = takeDirectory dir
+           in if parent == dir
+                then pure Nothing
+                else go parent
+
+chunksOf :: Int -> [a] -> [[a]]
+chunksOf _ [] = []
+chunksOf n xs =
+  let (chunk, rest) = splitAt n xs
+   in chunk : chunksOf n rest
+
+data ProgressState = ProgressState
+  { progressDone :: Int,
+    progressSuccess :: Int,
+    progressTotal :: Int
+  }
+
+putProgressLine :: ProgressState -> IO ()
+putProgressLine p =
+  do
+    putStr
+      ( "\r"
+          ++ show (progressSuccess p)
+          ++ "/"
+          ++ show (progressTotal p)
+          ++ " ("
+          ++ show (progressDone p)
+          ++ "/"
+          ++ show (progressTotal p)
+          ++ " processed)"
+      )
+    hFlush stdout
+
+pct :: Int -> Int -> Int
+pct _ 0 = 100
+pct n total = (n * 100) `div` total
+
+summaryOptions :: Options -> SummaryOptions
+summaryOptions opts =
+  SummaryOptions
+    { summaryKeepSucceeded = optPrintSucceeded opts,
+      summaryKeepFailedPackages = optPrintFailedTable opts,
+      summaryGhcErrorLimit =
+        case optGhcErrorsFile opts of
+          Just _ -> optGhcErrorsLimit opts
+          Nothing -> 0
+    }
