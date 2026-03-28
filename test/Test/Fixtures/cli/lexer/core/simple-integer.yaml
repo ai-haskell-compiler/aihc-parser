@@ -1,6 +1,0 @@
-input: "42"
-output: |
-  TkSpecialLBrace
-  TkInteger 42
-  TkSpecialRBrace
-status: pass

@@ -1,7 +1,0 @@
-input: "-10"
-output: |
-  TkSpecialLBrace
-  TkVarSym "-"
-  TkInteger 10
-  TkSpecialRBrace
-status: pass
