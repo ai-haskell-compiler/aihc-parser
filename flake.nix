@@ -68,12 +68,11 @@
               withoutProfiling final.ghc-lib-parser_9_14_1_20251220
             ));
             aihc-cpp = hsLib.dontCheck (hsLib.dontHaddock (
-              withoutProfiling (
-                final.callCabal2nix "aihc-cpp" (pkgs.fetchzip {
-                  url = "https://github.com/ai-haskell-compiler/aihc-cpp/releases/download/v1.0.0.3/aihc-cpp-1.0.0.3.tar.gz";
-                  sha256 = "0x76qvz2gkjrbf0dsrl9lvpr50d73gn728157dw048r95gk5kih7";
-                }) {}
-              )
+              withoutProfiling (final.callHackageDirect {
+                  pkg = "aihc-cpp";
+                  ver = "1.0.0.2";
+                  sha256 = "1bsq5549wq9nz62qrij6iabac4xv57dbwcqnflgvbfimj910jcz6";
+                } {})
             ));
             aihc-hackage =
               hsLib.dontCheck (withoutProfiling (final.callCabal2nix
