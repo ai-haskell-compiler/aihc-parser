@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Added `Addr#` literal syntax and expanded GHC layout oracle coverage.
 - Added a developer-only public fuzz registry for downstream property suites.
+- Added a `Read` instance for `FixityAssoc` so downstream metadata containing
+  operator fixities can be persisted and restored.
 
 ### Changed
 
