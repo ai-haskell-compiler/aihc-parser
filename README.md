@@ -1,5 +1,9 @@
 # aihc-parser
 
+[![CI](https://github.com/ai-haskell-compiler/aihc-parser/actions/workflows/nix-flake-check.yml/badge.svg)](https://github.com/ai-haskell-compiler/aihc-parser/actions/workflows/nix-flake-check.yml)
+[![GHC compatibility](https://github.com/ai-haskell-compiler/aihc-parser/actions/workflows/minimum-ghc.yml/badge.svg)](https://github.com/ai-haskell-compiler/aihc-parser/actions/workflows/minimum-ghc.yml)
+[![Hackage](https://img.shields.io/hackage/v/aihc-parser.svg)](https://hackage.haskell.org/package/aihc-parser)
+
 `aihc-parser` is a Haskell parser library. It parses modules, declarations,
 expressions, patterns, and types into an AST, and can pretty-print that AST
 back to source code.
@@ -31,7 +35,7 @@ of reaching into GHC internals.
 syntax is accepted and whether `aihc-parser` builds the same AST that GHC does.
 
 For the current support overview, see
-[aihc-parser-supported-extensions.md](../../docs/aihc-parser-supported-extensions.md).
+[aihc-parser-supported-extensions.md](docs/aihc-parser-supported-extensions.md).
 
 ## Caveats
 
@@ -55,3 +59,8 @@ generated syntax. The core properties are:
   GHC AST that `ghc-lib-parser` produces.
 - `parse`, `pretty`, `parens`, and shorthand rendering do not throw on generated
   inputs.
+
+## Development
+
+Run the complete local CI suite with `just check`, or the hermetic suite with
+`nix flake check`. Run `just qc` for continuous deep QuickCheck fuzzing.

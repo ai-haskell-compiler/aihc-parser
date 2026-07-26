@@ -1,11 +1,12 @@
 cabal-version: 3.8
 name: aihc-parser
-version: 1.0.0.3
+version: 1.0.0.4
 build-type: Simple
 license: Unlicense
 license-file: LICENSE
 extra-doc-files: CHANGELOG.md
 extra-source-files:
+  docs/aihc-parser-supported-extensions.md
   test/Test/Fixtures/**/*.hs
   test/Test/Fixtures/**/*.yaml
 
@@ -24,13 +25,12 @@ description:
   The package is validated with golden tests and oracle-backed differential
   tests against GHC.
 
-homepage: https://github.com/ai-haskell-compiler/aihc/tree/main/components/aihc-parser
-bug-reports: https://github.com/ai-haskell-compiler/aihc/issues
+homepage: https://github.com/ai-haskell-compiler/aihc-parser
+bug-reports: https://github.com/ai-haskell-compiler/aihc-parser/issues
 
 source-repository head
   type: git
-  location: https://github.com/ai-haskell-compiler/aihc.git
-  subdir: components/aihc-parser
+  location: https://github.com/ai-haskell-compiler/aihc-parser.git
 
 flag fuzz
   description: Build the developer-only QuickCheck property registry

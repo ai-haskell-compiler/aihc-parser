@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0.4] - 2026-07-26
+
+### Added
+
+- Added `Addr#` literal syntax and expanded GHC layout oracle coverage.
+- Added a developer-only public fuzz registry for downstream property suites.
+
+### Changed
+
+- Improved parser throughput and reduced allocations across large Stackage
+  inputs and deeply nested syntax.
+- Moved development to the standalone
+  [`ai-haskell-compiler/aihc-parser`](https://github.com/ai-haskell-compiler/aihc-parser)
+  repository, including the full test, progress, doctest, fuzz, and
+  compatibility CI configuration.
+
+### Fixed
+
+- Aligned multiline `case` scrutinee layout with GHC.
+
 ## [1.0.0.3] - 2026-06-01
 
 ### Changed

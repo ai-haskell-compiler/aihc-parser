@@ -1,0 +1,192 @@
+{
+  description = "aihc-parser development flake";
+
+  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+
+  outputs = {nixpkgs, ...}: let
+    systems = [
+      "x86_64-linux"
+      "aarch64-linux"
+      "x86_64-darwin"
+      "aarch64-darwin"
+    ];
+    forAllSystems = nixpkgs.lib.genAttrs systems;
+    projectSource = pkgs:
+      pkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = pkgs.lib.fileset.unions [
+          ./LICENSE
+          ./aihc-parser.cabal
+          ./src
+          ./test
+          ./fuzz
+          ./common
+          ./app
+          ./aihc-parser-compat
+          ./tooling
+        ];
+      };
+    mkHsPkgs = pkgs: let
+      hsLib = pkgs.haskell.lib;
+      src = projectSource pkgs;
+      localPackageNames = [
+        "aihc-hackage"
+        "aihc-parser"
+        "aihc-parser-compat"
+        "aihc-parser-tooling-common"
+      ];
+      isOverridableHaskellDrv = drv:
+        pkgs.lib.isDerivation drv && drv.isHaskellLibrary or false;
+      withoutProfiling = drv:
+        hsLib.disableExecutableProfiling (hsLib.disableLibraryProfiling drv);
+      disableUpstreamChecks = builtins.mapAttrs (
+        name: drv:
+          if builtins.elem name localPackageNames || !(isOverridableHaskellDrv drv)
+          then drv
+          else
+            hsLib.dontCheck
+            (hsLib.dontHaddock
+              (withoutProfiling drv))
+      );
+    in
+      pkgs.haskell.packages.ghc9124.override {
+        overrides = final: prev: let
+          mkSubpackage = name: subpath: options:
+            hsLib.overrideCabal
+            (final.callCabal2nixWithOptions name (src + "/${subpath}") options {})
+            (_old: {
+              inherit src;
+              postUnpack = ''
+                sourceRoot+="/${subpath}"
+                echo "source root reset to $sourceRoot"
+              '';
+            });
+        in
+          disableUpstreamChecks prev
+          // {
+            ghc-lib-parser = hsLib.dontCheck (hsLib.dontHaddock (
+              withoutProfiling final.ghc-lib-parser_9_14_1_20251220
+            ));
+            aihc-cpp = hsLib.dontCheck (hsLib.dontHaddock (
+              withoutProfiling (
+                final.callCabal2nix "aihc-cpp" (pkgs.fetchzip {
+                  url = "https://github.com/ai-haskell-compiler/aihc-cpp/releases/download/v1.0.0.3/aihc-cpp-1.0.0.3.tar.gz";
+                  sha256 = "0x76qvz2gkjrbf0dsrl9lvpr50d73gn728157dw048r95gk5kih7";
+                }) {}
+              )
+            ));
+            aihc-hackage =
+              hsLib.dontCheck (withoutProfiling (final.callCabal2nix
+                  "aihc-hackage" (src + "/tooling/aihc-hackage") {}));
+            aihc-parser = withoutProfiling (final.callCabal2nixWithOptions
+              "aihc-parser"
+              src "--flag fuzz" {});
+            aihc-parser-compat =
+              withoutProfiling (mkSubpackage
+                "aihc-parser-compat" "aihc-parser-compat" "--flag fuzz");
+            aihc-parser-tooling-common =
+              withoutProfiling (mkSubpackage
+                "aihc-parser-tooling-common" "tooling/aihc-parser-tooling-common" "");
+          };
+      };
+  in {
+    packages = forAllSystems (system: let
+      pkgs = import nixpkgs {inherit system;};
+      hsPkgs = mkHsPkgs pkgs;
+    in {
+      default = hsPkgs.aihc-parser;
+      aihc-parser = hsPkgs.aihc-parser;
+      parser-progress = hsPkgs.aihc-parser-tooling-common;
+    });
+
+    checks = forAllSystems (system: let
+      pkgs = import nixpkgs {inherit system;};
+      hsPkgs = mkHsPkgs pkgs;
+      src = projectSource pkgs;
+      checkedParser = pkgs.haskell.lib.overrideCabal hsPkgs.aihc-parser (old: {
+        doCheck = true;
+        configureFlags = (old.configureFlags or []) ++ ["--ghc-options=-Werror"];
+        testFlags = [
+          "--hide-successes"
+          "--quickcheck-tests"
+          "1000"
+          "--quickcheck-timeout"
+          "20s"
+          "--quickcheck-shrinks"
+          "10000"
+        ];
+      });
+      checkedHackage = pkgs.haskell.lib.overrideCabal hsPkgs.aihc-hackage (old: {
+        doCheck = true;
+        configureFlags = (old.configureFlags or []) ++ ["--ghc-options=-Werror"];
+      });
+      ghcEnv = hsPkgs.ghcWithPackages (p: [p.aihc-parser p.doctest]);
+      parserProgress = pkgs.lib.getExe' hsPkgs.aihc-parser-tooling-common "parser-progress";
+      lexerProgress = pkgs.lib.getExe' hsPkgs.aihc-parser-tooling-common "lexer-progress";
+      extensionProgress = pkgs.lib.getExe' hsPkgs.aihc-parser-tooling-common "parser-extension-progress";
+      sourceCheck = name: inputs: command:
+        pkgs.runCommand name {
+          nativeBuildInputs = inputs;
+          inherit src;
+        } ''
+          cp -r "$src" source
+          chmod -R u+w source
+          cd source
+          ${command}
+          touch "$out"
+        '';
+    in {
+      parser-tests = checkedParser;
+      parser-compat-tests = pkgs.haskell.lib.doCheck hsPkgs.aihc-parser-compat;
+      hackage-tests = checkedHackage;
+      doctest = sourceCheck "aihc-parser-doctest" [ghcEnv] ''
+        packageDb=$(ghc --print-global-package-db)
+        doctest -XGHC2021 -package-db="$packageDb" -isrc \
+          src/Aihc/Parser/Parens.hs \
+          src/Aihc/Parser/Pretty.hs \
+          src/Aihc/Parser/Shorthand.hs \
+          src/Aihc/Parser.hs
+      '';
+      parser-progress-strict = sourceCheck "aihc-parser-progress-strict" [] ''
+        ${parserProgress} --strict
+      '';
+      lexer-progress-strict = sourceCheck "aihc-lexer-progress-strict" [] ''
+        ${lexerProgress} --strict
+      '';
+      extension-progress-strict = sourceCheck "aihc-parser-extension-progress-strict" [] ''
+        ${extensionProgress} --strict
+      '';
+      haskell-format = sourceCheck "aihc-parser-haskell-format" [pkgs.ormolu pkgs.findutils] ''
+        find src test common app tooling -name '*.hs' -not -path '*/Test/Fixtures/*' -print0 | xargs -0 -r ormolu --mode check
+      '';
+      haskell-lint = sourceCheck "aihc-parser-haskell-lint" [pkgs.hlint pkgs.findutils] ''
+        find src test common app tooling -name '*.hs' -not -path '*/Test/Fixtures/*' -print0 | xargs -0 -r hlint
+      '';
+      cabal-format = sourceCheck "aihc-parser-cabal-format" [pkgs.haskellPackages.cabal-gild pkgs.findutils] ''
+        failed=0
+        while IFS= read -r -d "" file; do
+          cabal-gild --mode check --input "$file" || failed=1
+        done < <(find . -name '*.cabal' -print0)
+        test "$failed" -eq 0
+      '';
+    });
+
+    devShells = forAllSystems (system: let
+      pkgs = import nixpkgs {inherit system;};
+      hsPkgs = mkHsPkgs pkgs;
+    in {
+      default = pkgs.mkShell {
+        packages = [
+          hsPkgs.ghc
+          pkgs.cabal-install
+          pkgs.just
+          pkgs.ormolu
+          pkgs.hlint
+          pkgs.haskellPackages.cabal-gild
+        ];
+      };
+    });
+
+    formatter = forAllSystems (system: (import nixpkgs {inherit system;}).alejandra);
+  };
+}

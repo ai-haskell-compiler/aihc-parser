@@ -1,0 +1,16 @@
+packages:
+  .
+  aihc-parser-compat
+  tooling/aihc-hackage
+  tooling/aihc-parser-tooling-common
+  https://github.com/ai-haskell-compiler/aihc-cpp/releases/download/v1.0.0.3/aihc-cpp-1.0.0.3.tar.gz
+
+constraints: aihc-cpp ==1.0.0.3
+
+package aihc-parser
+  flags: +fuzz
+
+package aihc-parser-compat
+  flags: +fuzz
+
+tests: True
