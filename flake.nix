@@ -19,7 +19,6 @@
           ./aihc-parser.cabal
           ./src
           ./test
-          ./fuzz
           ./common
           ./app
           ./aihc-parser-compat
@@ -77,12 +76,11 @@
             aihc-hackage =
               hsLib.dontCheck (withoutProfiling (final.callCabal2nix
                   "aihc-hackage" (src + "/tooling/aihc-hackage") {}));
-            aihc-parser = withoutProfiling (final.callCabal2nixWithOptions
-              "aihc-parser"
-              src "--flag fuzz" {});
+            aihc-parser = withoutProfiling (final.callCabal2nix
+              "aihc-parser" src {});
             aihc-parser-compat =
               withoutProfiling (mkSubpackage
-                "aihc-parser-compat" "aihc-parser-compat" "--flag fuzz");
+                "aihc-parser-compat" "aihc-parser-compat" "");
             aihc-parser-tooling-common =
               withoutProfiling (mkSubpackage
                 "aihc-parser-tooling-common" "tooling/aihc-parser-tooling-common" "");

@@ -6,10 +6,4 @@ packages:
 
 constraints: aihc-cpp ==1.0.0.2
 
-package aihc-parser
-  flags: +fuzz
-
-package aihc-parser-compat
-  flags: +fuzz
-
 tests: True

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0.5] - 2026-07-27
+
+### Fixed
+
+- Removed the developer-only `fuzz` sublibrary and flag. Property generators
+  and fuzz tests now exist only as internals of the test suite, so Hackage
+  exposes only the parser library and its runtime dependencies.
+
 ## [1.0.0.4] - 2026-07-26
 
 ### Added
