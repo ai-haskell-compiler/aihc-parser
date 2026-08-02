@@ -46,8 +46,6 @@ The intended behavior is exact GHC compatibility. Rejecting code that GHC
 accepts is a bug. Accepting code that GHC rejects is also a bug, but that class
 of bug is harder to test exhaustively, so some cases almost certainly remain.
 
-It is also slower than GHC's parser.
-
 ## What Gets Tested
 
 The test suite uses golden examples, GHC oracle checks, package fixtures, and
