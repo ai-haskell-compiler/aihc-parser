@@ -16,10 +16,12 @@
         root = ./.;
         fileset = pkgs.lib.fileset.unions [
           ./LICENSE
+          ./CHANGELOG.md
           ./aihc-parser.cabal
           ./src
           ./test
           ./common
+          ./docs
           ./app
           ./aihc-parser-compat
           ./tooling
@@ -68,16 +70,17 @@
             ));
             aihc-cpp = hsLib.dontCheck (hsLib.dontHaddock (
               withoutProfiling (final.callHackageDirect {
-                  pkg = "aihc-cpp";
-                  ver = "1.0.0.2";
-                  sha256 = "1bsq5549wq9nz62qrij6iabac4xv57dbwcqnflgvbfimj910jcz6";
-                } {})
+                pkg = "aihc-cpp";
+                ver = "1.0.0.2";
+                sha256 = "1bsq5549wq9nz62qrij6iabac4xv57dbwcqnflgvbfimj910jcz6";
+              } {})
             ));
             aihc-hackage =
               hsLib.dontCheck (withoutProfiling (final.callCabal2nix
                   "aihc-hackage" (src + "/tooling/aihc-hackage") {}));
             aihc-parser = withoutProfiling (final.callCabal2nix
-              "aihc-parser" src {});
+              "aihc-parser"
+              src {});
             aihc-parser-compat =
               withoutProfiling (mkSubpackage
                 "aihc-parser-compat" "aihc-parser-compat" "");
