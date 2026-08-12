@@ -14,16 +14,20 @@ known compatibility bugs; if you find one, please report it.
 ## A Quick Taste
 
 ```console
-% echo 'main = putStrLn "hello world"' | aihc-dev parser
+% echo 'main = putStrLn "hello world"' | aihc-parser-dev
 Module {[DeclValue (PatternBind (PVar "main") (EApp (EVar "putStrLn") (EString "hello world")))]}
 ```
 
 It understands modern GHC syntax too:
 
 ```console
-% echo 'x = (.f.g)' | aihc-dev parser -XOverloadedRecordDot
+% echo 'x = (.f.g)' | aihc-parser-dev -XOverloadedRecordDot
 Module {[DeclValue (PatternBind (PVar "x") (EParen (EGetFieldProjection ["f", "g"])))]}
 ```
+
+`aihc-parser-dev` reads from standard input and defaults to Haskell2010. Use
+`--pretty` to emit Haskell source, `--language-edition GHC2024` to select an
+edition, and `-XExtension`/`-XNoExtension` to enable or disable extensions.
 
 Use it for source inspection, syntax-aware rewriting, Haskell syntax
 experiments, or compiler-adjacent tools that want a regular library API instead

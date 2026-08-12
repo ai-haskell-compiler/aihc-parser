@@ -77,6 +77,20 @@ library
   ghc-options: -Wall
   default-language: GHC2021
 
+executable aihc-parser-dev
+  main-is: Main.hs
+  hs-source-dirs: app/aihc-parser-dev
+
+  build-depends:
+    aihc-parser,
+    base >=4.19 && <5,
+    optparse-applicative >=0.16 && <0.19,
+    prettyprinter >=1.7 && <1.8,
+    text >=2.1.2 && <2.2,
+
+  ghc-options: -Wall
+  default-language: GHC2021
+
 test-suite spec
   type: exitcode-stdio-1.0
   hs-source-dirs:
