@@ -11,8 +11,12 @@
 - Use the Conventional Commits format for each commit message.
 - Use the Conventional Commits format for each pull request title.
 - Use the format `type(scope): description`. The scope is optional.
-- Keep `CHANGELOG.md` up to date with each applicable change.
-- Add new change-log entries to the `Unreleased` section.
+- Keep `CHANGELOG.md` up to date with each user-visible change.
+- Only put user-visible changes in `CHANGELOG.md`.
+- Put API changes, bug fixes, and performance improvements in `CHANGELOG.md`.
+- Do not put refactoring, CI changes, test-only changes, or repository
+  maintenance in `CHANGELOG.md`.
+- Add each new change-log entry to the `Unreleased` section.
 
 ## Tests
 
