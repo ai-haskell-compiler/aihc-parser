@@ -14,7 +14,6 @@ description:
 executable aihc-parser-dev
   main-is: Main.hs
   hs-source-dirs: app
-
   build-depends:
     aihc-parser >=1.0 && <1.1,
     base >=4.19 && <5,
