@@ -166,7 +166,6 @@ parseModule cfg input =
   let ts = mkTokStreamModule (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
       parser = do
         modu <- moduleParser
-        _ <- eofTok
         errs <- drainParseErrors
         pure (errs, modu)
    in case runParser parser (parserSourceName cfg) ts of
