@@ -1504,14 +1504,14 @@ bangTypeParserWith :: TokParser Type -> TokParser BangType
 bangTypeParserWith typeP = withSpan $ do
   pragmas <- MP.option [] (fmap (: []) unpackPragmaParser)
   strict <- MP.option False (expectedTok TkPrefixBang >> pure True)
-  lazy <- MP.option False (expectedTok TkPrefixTilde >> pure True)
+  isLazy <- MP.option False (expectedTok TkPrefixTilde >> pure True)
   ty <- typeP
   pure $ \span' ->
     BangType
       { bangAnns = [mkAnnotation span'],
         bangPragmas = pragmas,
         bangStrict = strict,
-        bangLazy = lazy,
+        bangLazy = isLazy,
         bangType = ty
       }
 

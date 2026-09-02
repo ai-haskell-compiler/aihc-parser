@@ -35,11 +35,14 @@ import Aihc.Parser.Syntax (Decl, Expr, ImportDecl, Module, ModuleHead, Pattern, 
 import Aihc.Parser.Types
 import Text.Megaparsec (runParser)
 
-parseFromTokens :: TokParser a -> FilePath -> [LexToken] -> ParseResult a
-parseFromTokens parser sourceName toks =
-  case runParser (parser <* eofTok) sourceName (mkTokStreamFromTokens toks) of
+runParserFromTokens :: TokParser a -> FilePath -> [LexToken] -> ParseResult a
+runParserFromTokens parser sourceName toks =
+  case runParser parser sourceName (mkTokStreamFromTokens toks) of
     Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
     Right parsed -> ParseOk parsed
+
+parseFromTokens :: TokParser a -> FilePath -> [LexToken] -> ParseResult a
+parseFromTokens parser = runParserFromTokens (parser <* eofTok)
 
 parseExprFromTokens :: FilePath -> [LexToken] -> ParseResult Expr
 parseExprFromTokens = parseFromTokens exprParser
@@ -54,7 +57,7 @@ parseTypeFromTokens :: FilePath -> [LexToken] -> ParseResult Type
 parseTypeFromTokens = parseFromTokens typeParser
 
 parseModuleFromTokens :: FilePath -> [LexToken] -> ParseResult Module
-parseModuleFromTokens = parseFromTokens moduleParser
+parseModuleFromTokens = runParserFromTokens moduleParser
 
 parseDeclFromTokens :: FilePath -> [LexToken] -> ParseResult Decl
 parseDeclFromTokens = parseFromTokens declParser

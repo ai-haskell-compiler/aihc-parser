@@ -6,12 +6,15 @@ module Main (main) where
 
 import Aihc.Cpp (resultOutput)
 import Aihc.Parser
+import Aihc.Parser.Internal.Common (TokParser, lazy)
 import Aihc.Parser.Lex (LexToken (..), LexTokenKind (..), lexTokens, lexTokensWithExtensions)
 import Aihc.Parser.Parens (addDeclParens, addExprParens, addTypeParens)
 import Aihc.Parser.Pretty ()
 import Aihc.Parser.Shorthand (Shorthand (shorthand))
 import Aihc.Parser.Syntax
+import Aihc.Parser.Types (mkTokStreamFromTokens)
 import Control.DeepSeq (rnf)
+import Control.Exception (ErrorCall, evaluate, try)
 import CppSupport (preprocessForParserWithoutIncludesIfEnabled)
 import Data.Char (ord)
 import Data.Data (Data, dataTypeConstrs, dataTypeOf, gmapQl, isAlgType, showConstr, toConstr)
@@ -83,6 +86,9 @@ import Test.StackageProgress.Summary (stackageProgressSummaryTests)
 import Test.Tasty
 import Test.Tasty.HUnit
 import Test.Tasty.QuickCheck qualified as QC
+import Text.Megaparsec (runParser)
+import Text.Megaparsec qualified as MP
+import Text.Megaparsec.Error qualified as MPE
 import Text.Read (readMaybe)
 
 tenMinutes :: Timeout
@@ -158,6 +164,38 @@ assertExprRenderingRoundTrip config expr rendered =
     ParseErr bundle ->
       assertFailure ("expected pretty-printed expression to reparse, got:\n" <> formatParseErrors "<test>" Nothing bundle)
 
+lazyExceptionParser :: TokParser ()
+lazyExceptionParser = error "lazy parser was forced"
+
+test_lazyDoesNotForceParser :: Assertion
+test_lazyDoesNotForceParser =
+  case runParser parser "<lazy-test>" (mkTokStreamFromTokens []) of
+    Left bundle -> assertFailure (show bundle)
+    Right () -> pure ()
+  where
+    parser = do
+      _ <- lazy lazyExceptionParser
+      pure ()
+
+test_lazyForcesParserWhenResultIsForced :: Assertion
+test_lazyForcesParserWhenResultIsForced =
+  case runParser (fst <$> lazy lazyExceptionParser) "<lazy-test>" (mkTokStreamFromTokens []) of
+    Left bundle -> assertFailure (show bundle)
+    Right value -> do
+      result <- try (evaluate value) :: IO (Either ErrorCall ())
+      case result of
+        Left _ -> pure ()
+        Right () -> assertFailure "expected the lazy parser to be forced"
+
+test_lazyPreservesErrors :: Assertion
+test_lazyPreservesErrors =
+  case runParser (snd <$> lazy lazyErrorParser) "<lazy-test>" (mkTokStreamFromTokens []) of
+    Left bundle -> assertFailure (show bundle)
+    Right finalState -> assertEqual "error count" 1 (length (MP.stateParseErrors finalState))
+  where
+    lazyErrorParser :: TokParser ()
+    lazyErrorParser = MP.registerParseError (MPE.TrivialError 0 Nothing Set.empty)
+
 main :: IO ()
 main = buildTests >>= defaultMain
 
@@ -178,7 +216,13 @@ buildTests = do
         lexer,
         testGroup
           "parser"
-          [ testCase "emits lexer error token for unterminated strings" test_unterminatedStringProducesErrorToken,
+          [ testGroup
+              "lazy"
+              [ testCase "does not run the parser until its result is forced" test_lazyDoesNotForceParser,
+                testCase "runs the parser when its result is forced" test_lazyForcesParserWhenResultIsForced,
+                testCase "preserves errors from the lazy parser" test_lazyPreservesErrors
+              ],
+            testCase "emits lexer error token for unterminated strings" test_unterminatedStringProducesErrorToken,
             testCase "emits lexer error token for unterminated block comments" test_unterminatedBlockCommentProducesErrorToken,
             testCase "applies hash line directives to subsequent tokens" test_hashLineDirectiveUpdatesSpan,
             testCase "applies gcc-style hash line directives to subsequent tokens" test_gccHashLineDirectiveUpdatesSpan,

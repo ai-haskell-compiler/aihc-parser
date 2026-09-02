@@ -37,6 +37,7 @@ module Aihc.Parser.Internal.Common
     optionalSuffix,
     parens,
     braces,
+    closeAndExpectRBrace,
     thQuoteParser,
     skipSemicolons,
     bracedSemiSep,
@@ -61,6 +62,7 @@ module Aihc.Parser.Internal.Common
     layoutSepEndBy,
     layoutSepBy1,
     drainParseErrors,
+    lazy,
     startsWithContextType,
     startsWithTypeSig,
     startsWithAsPattern,
@@ -967,6 +969,30 @@ drainParseErrors = do
   let errs = MP.stateParseErrors st
   MP.updateParserState (\s -> s {MP.stateParseErrors = []})
   pure errs
+
+-- | Run a terminal parser from a copy of the current state when its result is
+-- demanded. The outer parser does not advance. Recovered errors are retained
+-- in the returned state; a complete failure returns 'mempty'.
+lazy :: (Monoid a) => TokParser a -> TokParser (a, MP.State TokStream ParserErrorComponent)
+lazy parser = do
+  initialState <- MP.getParserState
+  let ~(value, finalState) =
+        case MP.runParser' captureResult initialState of
+          (_, Right parsed) -> parsed
+          (failedState, Left bundle) ->
+            ( mempty,
+              failedState
+                { MP.stateParseErrors =
+                    reverse (NE.toList (MPE.bundleErrors bundle))
+                }
+            )
+  pure (value, finalState)
+  where
+    captureResult = do
+      value <- parser
+      finalState <- MP.getParserState
+      MP.updateParserState (\state -> state {MP.stateParseErrors = []})
+      pure (value, finalState)
 
 -- | Non-consuming lookahead dispatch for optional context types.
 -- Uses scanning to probe for @=>@ at top bracket depth.

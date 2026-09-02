@@ -10,11 +10,20 @@ module Aihc.Parser.Internal.Module
   )
 where
 
-import Aihc.Parser.Internal.Common (TokParser, braces, expectedTok, skipSemicolons, withSpan)
+import Aihc.Parser.Internal.Common
+  ( TokParser,
+    closeAndExpectRBrace,
+    eofTok,
+    expectedTok,
+    inputStartSpan,
+    lazy,
+    skipSemicolons,
+  )
 import Aihc.Parser.Internal.Decl (declParser)
 import Aihc.Parser.Internal.Import (importDeclParser, languagePragmaParser, moduleHeaderParser)
-import Aihc.Parser.Lex (LexTokenKind (..), lexTokenKind)
-import Aihc.Parser.Syntax (Decl, ImportDecl, Module (..), mkAnnotation)
+import Aihc.Parser.Lex (LexToken (lexTokenSpan), LexTokenKind (..), lexTokenKind)
+import Aihc.Parser.Syntax (Decl, ImportDecl, Module (..), mergeSourceSpans, mkAnnotation, noSourceSpan)
+import Aihc.Parser.Types (TokStream (tokStreamPrevToken))
 import Control.Monad (void)
 import Text.Megaparsec qualified as MP
 
@@ -23,27 +32,33 @@ data RecoverParseStep a
   | RecoverParsed !a
   | RecoverFailed
 
+-- | Parse the header and imports now, leaving declarations, their errors, and
+-- the whole-module span suspended until the corresponding result is demanded.
 moduleParser :: TokParser Module
-moduleParser = withSpan $ do
+moduleParser = do
+  startInput <- MP.getInput
   languagePragmas <- MP.many (languagePragmaParser <* MP.many (expectedTok TkSpecialSemicolon))
   mHeader <- MP.optional (moduleHeaderParser <* MP.many (expectedTok TkSpecialSemicolon))
-  (imports, decls) <- moduleBodyParser
-  pure $ \span' ->
+  expectedTok TkSpecialLBrace
+  imports <- importDeclsWithRecovery
+  (decls, finalState) <-
+    lazy
+      ( declsWithRecovery
+          <* skipSemicolons
+          <* closeAndExpectRBrace
+          <* MP.lookAhead eofTok
+      )
+  MP.updateParserState (\state -> state {MP.stateParseErrors = MP.stateParseErrors finalState})
+  let endSpan = maybe noSourceSpan lexTokenSpan (tokStreamPrevToken (MP.stateInput finalState))
+      moduleSpan = mergeSourceSpans (inputStartSpan startInput) endSpan
+  pure
     Module
-      { moduleAnns = [mkAnnotation span'],
+      { moduleAnns = [mkAnnotation moduleSpan],
         moduleHead = mHeader,
         moduleLanguagePragmas = concat languagePragmas,
         moduleImports = imports,
         moduleDecls = decls
       }
-
-moduleBodyParser :: TokParser ([ImportDecl], [Decl])
-moduleBodyParser = braces $ do
-  skipSemicolons
-  imports <- importDeclsWithRecovery
-  decls <- declsWithRecovery
-  skipSemicolons
-  pure (imports, decls)
 
 importDeclsWithRecovery :: TokParser [ImportDecl]
 importDeclsWithRecovery = recoverDeclLike importDeclParser
