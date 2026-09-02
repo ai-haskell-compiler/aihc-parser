@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.0.0.6] - 2026-09-02
+
+### Added
+
+- Added the `aihc-parser-dev` executable for parsing Haskell source from
+  standard input, inspecting syntax trees, and exercising the pretty-printer.
+
+### Changed
+
+- Deferred module declaration parsing until declarations, parse errors, or the
+  module span are demanded.
+
 ## [1.0.0.5] - 2026-07-27
 
 ### Fixed
