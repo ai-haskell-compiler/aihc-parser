@@ -18,13 +18,14 @@ import Data.Char (isAlpha)
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
-import {-# SOURCE #-} Test.Properties.Arb.Expr (genRhs, shrinkExpr, shrinkGuardQualifier)
+import {-# SOURCE #-} Test.Properties.Arb.Expr (genExpr, genRhs, shrinkExpr, shrinkGuardQualifier)
 import Test.Properties.Arb.Identifiers
   ( genConId,
     genConName,
     genConSym,
     genConUnqualifiedName,
     genVarId,
+    genVarIdNoHash,
     genVarName,
     genVarSym,
     genVarUnqualifiedName,
@@ -119,8 +120,29 @@ genPatternValueDecl :: Gen ValueDecl
 genPatternValueDecl =
   PatternBind NoMultiplicityTag <$> genPattern <*> genRhs
 
+-- | GHC's grammar has no @where@ clause on an implicit-parameter binding
+-- (@dbind : ipvar '=' exp@ in GHC's @Parser.y@); the parser only accepts one
+-- for backwards compatibility with the old encoding (see
+-- 'Aihc.Parser.Syntax.DeclImplicitParam'). Never generate one here so that
+-- generated sources stay accepted by GHC itself.
+genDeclImplicitParam :: Gen Decl
+genDeclImplicitParam = do
+  name <- ("?" <>) <$> genVarIdNoHash
+  expr <- genExpr
+  pure (DeclImplicitParam name expr Nothing)
+
+-- | A @where@ clause is either all ordinary value bindings or all implicit
+-- parameter bindings: GHC's grammar does not allow mixing the two forms in
+-- the same binding group (verifying that a mixed group is rejected is left
+-- to a downstream package, see the issue this constructor was added for).
 genWhereDecls :: Gen (Maybe [Decl])
-genWhereDecls = optional $ scale (`div` 2) $ listOf (DeclValue <$> genDeclValue)
+genWhereDecls =
+  optional $
+    scale (`div` 2) $
+      oneof
+        [ listOf (DeclValue <$> genDeclValue),
+          listOf1 genDeclImplicitParam
+        ]
 
 genDeclTypeSig :: Gen Decl
 genDeclTypeSig = DeclTypeSig <$> smallList1 genVarUnqualifiedName <*> genType
@@ -1166,6 +1188,9 @@ shrinkDecl decl =
   case decl of
     DeclAnn _ inner -> inner : shrinkDecl inner
     DeclValue vd -> map DeclValue (shrinkValueDecl vd)
+    DeclImplicitParam name expr mWhere ->
+      [DeclImplicitParam name expr' mWhere | expr' <- shrinkExpr expr]
+        <> [DeclImplicitParam name expr (Just ds') | Just ds <- [mWhere], ds' <- shrinkWhereDecls ds]
     DeclTypeSig names ty ->
       [DeclTypeSig names' ty | names' <- shrinkList shrinkBinderName names, not (null names')]
         <> [DeclTypeSig names ty' | ty' <- shrinkType ty]

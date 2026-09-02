@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Added dedicated `EImplicitParam` and `DeclImplicitParam` AST constructors
+  for `?x` expressions and `?x = e` bindings under `ImplicitParams`. These
+  forms previously reused `EVar` and `PatternBind`/`PVar`, which made an
+  implicit parameter indistinguishable from an ordinary variable downstream.
+  `TImplicitParam` (the type-level form) is unchanged.
+
 ## [1.0.0.6] - 2026-09-02
 
 ### Changed

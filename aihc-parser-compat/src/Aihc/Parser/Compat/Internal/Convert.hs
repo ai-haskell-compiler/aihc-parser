@@ -34,6 +34,7 @@ toGhcHsDecl decl =
   case A.peelDeclAnn decl of
     A.DeclAnn _ inner -> toGhcHsDecl inner
     A.DeclValue value -> ValD noExtField (valueBind value)
+    A.DeclImplicitParam name expr whereDecls -> ValD noExtField (implicitParamBind name expr whereDecls)
     A.DeclTypeSig names ty -> SigD noExtField (typeSig names ty)
     A.DeclPatSyn patSyn -> ValD noExtField (patSynBind patSyn)
     A.DeclPatSynSig names ty -> SigD noExtField (PatSynSig noAnn (map (lA . toRdrName . A.qualifyName Nothing) names) (toSigType ty))
@@ -630,6 +631,7 @@ toGhcHsExpr expr =
   case A.peelExprAnn expr of
     A.EAnn _ inner -> toGhcHsExpr inner
     A.EVar name -> HsVar noExtField (lA (toRdrName name))
+    A.EImplicitParam name -> HsIPVar noExtField (HsIPName (mkFastString (T.unpack (T.dropWhile (== '?') name))))
     A.ETypeSyntax _ ty -> HsEmbTy noAnn (toWcType ty)
     A.EInt value numeric raw -> integerExpr value numeric raw
     A.EFloat value floatTy raw -> floatExpr value floatTy raw
@@ -1134,24 +1136,54 @@ multAnn arrow =
     A.ArrowLinear -> HsLinearAnn noAnn
     A.ArrowExplicit ty -> HsExplicitMult (noAnn, EpPatBind) (toLHsType ty)
 
+-- | A local binding group that consists entirely of @?x = e@ implicit
+-- parameter bindings is represented by GHC as 'HsIPBinds' rather than
+-- 'HsValBinds' (implicit parameter bindings and ordinary bindings can never
+-- be mixed in the same group). A mixed group -- which 'aihc-parser' accepts
+-- but GHC does not -- falls back to the ordinary 'declBindSig' conversion.
 localBinds :: [A.Decl] -> HsLocalBinds GhcPs
-localBinds decls =
-  let (binds, sigs) = foldMap declBindSig decls
-   in if null binds && null sigs
-        then EmptyLocalBinds noExtField
-        else HsValBinds noAnn (ValBinds NoAnnSortKey binds sigs)
+localBinds decls
+  | not (null decls), all isImplicitParamDecl decls = ipLocalBinds decls
+  | otherwise =
+      let (binds, sigs) = foldMap declBindSig decls
+       in if null binds && null sigs
+            then EmptyLocalBinds noExtField
+            else HsValBinds noAnn (ValBinds NoAnnSortKey binds sigs)
 
 whereBinds :: Maybe [A.Decl] -> HsLocalBinds GhcPs
 whereBinds Nothing = EmptyLocalBinds noExtField
-whereBinds (Just decls) =
-  let (binds, sigs) = foldMap declBindSig decls
-   in HsValBinds noAnn (ValBinds NoAnnSortKey binds sigs)
+whereBinds (Just decls)
+  | not (null decls), all isImplicitParamDecl decls = ipLocalBinds decls
+  | otherwise =
+      let (binds, sigs) = foldMap declBindSig decls
+       in HsValBinds noAnn (ValBinds NoAnnSortKey binds sigs)
+
+isImplicitParamDecl :: A.Decl -> Bool
+isImplicitParamDecl decl =
+  case A.peelDeclAnn decl of
+    A.DeclImplicitParam {} -> True
+    _ -> False
+
+ipLocalBinds :: [A.Decl] -> HsLocalBinds GhcPs
+ipLocalBinds decls = HsIPBinds noAnn (IPBinds noExtField (map toIPBind decls))
+
+-- | Convert a single @?x = e@ decl to a GHC 'IPBind'. Any (non-standard,
+-- compatibility-only) @where@ clause on the binding has no GHC counterpart
+-- and is dropped -- see 'implicitParamBind'. Only called on decls already
+-- confirmed by 'isImplicitParamDecl' to be 'A.DeclImplicitParam'.
+toIPBind :: A.Decl -> LIPBind GhcPs
+toIPBind decl =
+  case A.peelDeclAnn decl of
+    A.DeclImplicitParam name expr _whereDecls ->
+      lA (IPBind noAnn (lA (HsIPName (mkFastString (T.unpack (T.dropWhile (== '?') name))))) (toGhcLHsExpr expr))
+    _ -> error "aihc-parser-compat: toIPBind: expected DeclImplicitParam"
 
 declBindSig :: A.Decl -> ([LHsBind GhcPs], [LSig GhcPs])
 declBindSig decl =
   case A.peelDeclAnn decl of
     A.DeclAnn _ inner -> declBindSig inner
     A.DeclValue value -> ([lA (valueBind value)], [])
+    A.DeclImplicitParam name expr whereDecls -> ([lA (implicitParamBind name expr whereDecls)], [])
     A.DeclTypeSig names ty -> ([], [lA (TypeSig noAnn (map (lA . toRdrName . A.qualifyName Nothing) names) (toSigWcType ty))])
     A.DeclSplice expr -> ([lA (PatBind noExtField (lA (SplicePat noExtField (HsUntypedSpliceExpr noAnn (toGhcLHsExpr expr)))) (HsUnannotated EpPatBind) (grhss (A.UnguardedRhs [] (A.EVar "undefined") Nothing)))], [])
     _ -> ([], [])
@@ -1173,6 +1205,22 @@ valueBind value =
            in FunBind noExtField (lA funName) (matchGroup (FunRhs (lA funName) Prefix SrcStrict noAnn) [match (FunRhs (lA funName) Prefix SrcStrict noAnn) [] rhs])
     A.PatternBind multiplicity pat rhs ->
       PatBind noExtField (toLPat pat) (patMult multiplicity) (grhss rhs)
+
+-- | Convert a @?x = e@ implicit-parameter binding into a plain GHC 'FunBind'
+-- on the (lexically @?@-prefixed) name. @ghc-lib-parser@ has no top-level
+-- 'HsDecl' shape for implicit parameters (they only occur inside @let@\/@where@
+-- as 'IPBind'), so this mirrors the previous representation of @?x = e@ as an
+-- ordinary binding for structural comparisons.
+implicitParamBind :: T.Text -> A.Expr -> Maybe [A.Decl] -> HsBind GhcPs
+implicitParamBind name expr whereDecls =
+  let funName = toRdrName (A.qualifyName Nothing (A.mkUnqualifiedName A.NameVarId name))
+   in FunBind
+        noExtField
+        (lA funName)
+        ( matchGroup
+            (FunRhs (lA funName) Prefix NoSrcStrict noAnn)
+            [match (FunRhs (lA funName) Prefix NoSrcStrict noAnn) [] (A.UnguardedRhs [] expr whereDecls)]
+        )
 
 varPatName :: A.Pattern -> Maybe A.UnqualifiedName
 varPatName pat =

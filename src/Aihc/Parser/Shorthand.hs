@@ -210,6 +210,11 @@ docDecl decl =
   case decl of
     DeclAnn _ sub -> docDecl sub
     DeclValue vdecl -> "DeclValue" <+> parens (docValueDecl vdecl)
+    DeclImplicitParam name expr whereDecls ->
+      "DeclImplicitParam"
+        <+> docText name
+        <+> parens (docExpr expr)
+        <+> maybe "Nothing" (\decls -> "Just" <+> brackets (hsep (punctuate comma (map docDecl decls)))) whereDecls
     DeclTypeSig names ty -> "DeclTypeSig" <+> brackets (hsep (punctuate comma (map docUnqualifiedNameText names))) <+> parens (docType ty)
     DeclPatSyn ps -> "DeclPatSyn" <+> parens (docPatSynDecl ps)
     DeclPatSynSig names ty -> "DeclPatSynSig" <+> brackets (hsep (punctuate comma (map docUnqualifiedName names))) <+> parens (docType ty)
@@ -828,6 +833,7 @@ docExpr :: Expr -> Doc ann
 docExpr expr =
   case expr of
     EVar name -> "EVar" <+> docName name
+    EImplicitParam name -> "EImplicitParam" <+> docText name
     ETypeSyntax form ty -> "ETypeSyntax" <+> docTypeSyntaxForm form <+> parens (docType ty)
     EInt n nt _ -> "EInt" <+> pretty n <+> docNumericType nt
     EFloat n ft _ -> "EFloat" <+> pretty (show n) <+> docFloatType ft
