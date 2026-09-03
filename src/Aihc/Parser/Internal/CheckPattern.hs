@@ -38,6 +38,7 @@ checkPattern expr = case expr of
     | isConLikeName name -> Right (PCon name [] [])
     | isJust (nameQualifier name) -> Left "unexpected qualified name in pattern"
     | otherwise -> Right (PVar (nameToUnqualified name))
+  EImplicitParam {} -> Left "unexpected implicit parameter in pattern"
   ETypeSyntax form ty -> Right (PTypeSyntax form ty)
   -- Parenthesized expression
   -- When the inner expression is a view-pattern arrow (@expr -> expr@),

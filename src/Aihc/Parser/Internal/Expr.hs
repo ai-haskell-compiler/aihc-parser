@@ -1306,13 +1306,7 @@ implicitParamDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
   expectedTok TkReservedEquals
   rhsExpr <- exprParser
   whereDecls <- MP.optional whereClauseParser
-  pure $
-    DeclValue
-      ( PatternBind
-          NoMultiplicityTag
-          (PVar (mkUnqualifiedName NameVarId name))
-          (UnguardedRhs [] rhsExpr whereDecls)
-      )
+  pure $ DeclImplicitParam name rhsExpr whereDecls
 
 varExprParser :: TokParser Expr
 varExprParser = do
@@ -1327,7 +1321,7 @@ implicitParamExprParser =
         Just $
           EAnn
             (mkAnnotation (lexTokenSpan tok))
-            (EVar (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarId name)))
+            (EImplicitParam name)
       _ -> Nothing
 
 wildcardExprParser :: TokParser Expr

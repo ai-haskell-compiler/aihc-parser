@@ -474,6 +474,7 @@ shrinkExpr expr =
   [EList [] | expr /= EList []]
     ++ case expr of
       EVar name -> [EVar name' | name' <- shrinkName name]
+      EImplicitParam _ -> []
       ETypeSyntax form ty -> [ETypeSyntax form ty' | ty' <- shrinkType ty]
       EInt value _ _ -> simpleVarExpr : [mkIntExpr shrunk | shrunk <- shrinkIntegral value]
       EFloat value _ _ -> simpleVarExpr : [mkFloatExpr shrunk | shrunk <- shrinkFloat value]

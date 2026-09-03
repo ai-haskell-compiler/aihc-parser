@@ -606,6 +606,8 @@ addDeclParens decl =
   case decl of
     DeclAnn ann sub -> DeclAnn ann (addDeclParens sub)
     DeclValue vdecl -> DeclValue (addValueDeclParens vdecl)
+    DeclImplicitParam name body whereDecls ->
+      DeclImplicitParam name (addExprParens body) (fmap (map addDeclParens) whereDecls)
     DeclTypeSig names ty -> DeclTypeSig names (addSignatureTypeParens ty)
     DeclPatSyn ps -> DeclPatSyn (addPatSynDeclParens ps)
     DeclPatSynSig names ty -> DeclPatSynSig names (addSignatureTypeParens ty)
@@ -1078,6 +1080,7 @@ addExprParensPrec prec expr =
        in wrapExpr (prec > 2) (ETypeApp fn' (addTypeIn CtxTypeAppVisibleArg ty))
     ETypeSyntax form ty -> wrapExpr (prec > 2) (ETypeSyntax form (addSignatureTypeParens ty))
     EVar {} -> expr
+    EImplicitParam {} -> expr
     EInt {} -> expr
     EFloat {} -> expr
     EChar {} -> expr

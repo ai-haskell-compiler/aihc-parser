@@ -247,6 +247,8 @@ prettyDeclLines decl =
   case decl of
     DeclAnn _ sub -> prettyDeclLines sub
     DeclValue valueDecl -> prettyValueDeclLines valueDecl
+    DeclImplicitParam name expr whereDecls ->
+      [pretty name <+> "=" <+> prettyExpr expr <> prettyIndentedWhereClause whereDecls]
     DeclTypeSig names ty -> [hsep [hsep (punctuate comma (map prettyBinderName names)), "::", prettyType ty]]
     DeclPatSyn patSynDecl -> [prettyPatSynDecl patSynDecl]
     DeclPatSynSig names ty -> [hsep ["pattern", hsep (punctuate comma (map prettyConstructorUName names)), "::", prettyType ty]]
@@ -1150,6 +1152,7 @@ prettyExpr expr =
     ETypeApp fn ty ->
       nest 2 (prettyExpr fn) <> nest 1 (hardline <> " " <> prettyTypeAppArg ty)
     EVar name -> prettyName name
+    EImplicitParam name -> pretty name
     ETypeSyntax TypeSyntaxExplicitNamespace ty -> "type" <+> prettyType ty
     ETypeSyntax TypeSyntaxInTerm ty -> prettyType ty
     EInt _ _ repr -> pretty repr

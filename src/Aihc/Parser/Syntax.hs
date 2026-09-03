@@ -1028,6 +1028,8 @@ data Decl
     DeclAnn Annotation Decl
   | -- | @f x = x@ or @x = 1@
     DeclValue ValueDecl
+  | -- | @?x = e@ in a @let@ or @where@ group
+    DeclImplicitParam Text Expr (Maybe [Decl])
   | -- | @f, g :: Int -> Int@
     DeclTypeSig [BinderName] Type
   | -- | @pattern P x = Just x@
@@ -1986,6 +1988,8 @@ data Expr
     EAnn Annotation Expr
   | -- | @x@ or @Data.List.map@
     EVar Name
+  | -- | @?x@
+    EImplicitParam Text
   | -- | @type T@ in a term position.
     ETypeSyntax TypeSyntaxForm Type
   | -- | @1@, @1#@, @1#Word8@
