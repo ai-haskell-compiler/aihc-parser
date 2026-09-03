@@ -15,7 +15,7 @@ executable aihc-parser-dev
   main-is: Main.hs
   hs-source-dirs: app
   build-depends:
-    aihc-parser >=1.0 && <1.1,
+    aihc-parser >=2.0 && <2.1,
     base >=4.19 && <5,
     optparse-applicative >=0.16 && <0.19,
     prettyprinter >=1.7 && <1.8,
