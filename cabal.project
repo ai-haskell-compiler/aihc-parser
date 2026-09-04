@@ -2,6 +2,7 @@ packages:
   .
   aihc-parser-compat
   tooling/aihc-hackage
+  tooling/aihc-parser-bench
   tooling/aihc-parser-dev
   tooling/aihc-parser-tooling-common
 

@@ -33,6 +33,7 @@
       localPackageNames = [
         "aihc-hackage"
         "aihc-parser"
+        "aihc-parser-bench"
         "aihc-parser-compat"
         "aihc-parser-tooling-common"
       ];
@@ -81,6 +82,9 @@
             aihc-parser = withoutProfiling (final.callCabal2nix
               "aihc-parser"
               src {});
+            aihc-parser-bench =
+              hsLib.dontCheck (withoutProfiling (mkSubpackage
+                  "aihc-parser-bench" "tooling/aihc-parser-bench" ""));
             aihc-parser-compat =
               withoutProfiling (mkSubpackage
                 "aihc-parser-compat" "aihc-parser-compat" "");
@@ -96,7 +100,36 @@
     in {
       default = hsPkgs.aihc-parser;
       aihc-parser = hsPkgs.aihc-parser;
+      aihc-parser-bench = hsPkgs.aihc-parser-bench;
       parser-progress = hsPkgs.aihc-parser-tooling-common;
+    });
+
+    apps = forAllSystems (system: let
+      pkgs = import nixpkgs {inherit system;};
+      hsPkgs = mkHsPkgs pkgs;
+      benchExe = pkgs.lib.getExe' hsPkgs.aihc-parser-bench "aihc-parser-bench";
+    in {
+      generate-benchmarks = {
+        type = "app";
+        program = "${pkgs.writeShellApplication {
+          name = "generate-benchmarks";
+          runtimeInputs = [
+            pkgs.bash
+            pkgs.git
+            pkgs.llvmPackages.clang
+            hsPkgs.cpphs
+          ];
+          text = ''
+            set -euo pipefail
+            test -f aihc-parser.cabal || {
+              echo "Run this app from the repository root." >&2
+              exit 1
+            }
+            exec ${benchExe} report "$@"
+          '';
+        }}/bin/generate-benchmarks";
+        meta.description = "Regenerate BENCHMARKS.md from a Stackage snapshot";
+      };
     });
 
     checks = forAllSystems (system: let
@@ -139,6 +172,7 @@
       parser-tests = checkedParser;
       parser-compat-tests = pkgs.haskell.lib.doCheck hsPkgs.aihc-parser-compat;
       hackage-tests = checkedHackage;
+      parser-bench-tests = pkgs.haskell.lib.doCheck hsPkgs.aihc-parser-bench;
       doctest = sourceCheck "aihc-parser-doctest" [ghcEnv] ''
         packageDb=$(ghc --print-global-package-db)
         doctest -XGHC2021 -package-db="$packageDb" -isrc \
