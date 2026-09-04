@@ -38,6 +38,8 @@ module Aihc.Parser.Lex.Types
     advanceChars,
     advanceN,
     consumeWhile,
+    skipWhitespace,
+    utf8CharWidth,
     tokenStartCol,
     virtualSymbolToken,
     isSymbolicOpChar,
@@ -53,6 +55,7 @@ import Data.Char (GeneralCategory (..), generalCategory, isAscii, isSpace, ord)
 import Data.Data (Data)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Text.Unsafe qualified as TU
 import GHC.Generics (Generic)
 
 data LexTokenKind
@@ -375,8 +378,7 @@ mkSpan start end =
 
 advanceChars :: Text -> LexerState -> LexerState
 advanceChars consumed st =
-  let !n = T.length consumed
-      go (!line, !col, !byteOff, !atLineStart) ch =
+  let go (!line, !col, !byteOff, !atLineStart) ch =
         case ch of
           '\n' -> (line + 1, 1, byteOff + 1, True)
           '\t' ->
@@ -389,7 +391,9 @@ advanceChars consumed st =
       (!finalLine, !finalCol, !finalByteOff, !finalAtLineStart) =
         T.foldl' go (lexerLine st, lexerCol st, lexerByteOffset st, lexerAtLineStart st) consumed
    in st
-        { lexerInput = T.drop n (lexerInput st),
+        { -- The consumed text is a prefix of the input, so dropping its UTF-8
+          -- byte length avoids a second scan of the characters.
+          lexerInput = TU.dropWord8 (TU.lengthWord8 consumed) (lexerInput st),
           lexerLine = finalLine,
           lexerCol = finalCol,
           lexerByteOffset = finalByteOff,
@@ -403,6 +407,37 @@ consumeWhile :: (Char -> Bool) -> LexerState -> LexerState
 consumeWhile f st =
   let consumed = T.takeWhile f (lexerInput st)
    in advanceChars consumed st
+
+-- | Skip leading Haskell whitespace in one pass and record that trivia was
+-- seen. Equivalent to @markHadTrivia (consumeWhile isHaskellWhitespace)@ but
+-- without the intermediate slice and the second lexer-state copy.
+skipWhitespace :: LexerState -> LexerState
+skipWhitespace st =
+  let input = lexerInput st
+      !len = TU.lengthWord8 input
+      go !i !line !col !byteOff !atLineStart
+        | i >= len = finish i line col byteOff atLineStart
+        | otherwise =
+            let TU.Iter ch d = TU.iter input i
+             in case ch of
+                  '\n' -> go (i + d) (line + 1) 1 (byteOff + 1) True
+                  '\t' ->
+                    let nextTabStop = 8 - ((col - 1) `mod` 8)
+                     in go (i + d) line (col + nextTabStop) (byteOff + 1) atLineStart
+                  ' ' -> go (i + d) line (col + 1) (byteOff + 1) atLineStart
+                  _
+                    | isSpace ch -> go (i + d) line (col + 1) (byteOff + d) atLineStart
+                    | otherwise -> finish i line col byteOff atLineStart
+      finish i line col byteOff atLineStart =
+        st
+          { lexerInput = TU.dropWord8 i input,
+            lexerLine = line,
+            lexerCol = col,
+            lexerByteOffset = byteOff,
+            lexerAtLineStart = atLineStart,
+            lexerHadTrivia = True
+          }
+   in go 0 (lexerLine st) (lexerCol st) (lexerByteOffset st) (lexerAtLineStart st)
 
 tokenStartCol :: LexToken -> Int
 tokenStartCol tok =
