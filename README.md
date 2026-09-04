@@ -66,3 +66,12 @@ generated syntax. The core properties are:
 
 Run the complete local CI suite with `just check`, or the hermetic suite with
 `nix flake check`. Run `just qc` for continuous deep QuickCheck fuzzing.
+
+## Performance
+
+[BENCHMARKS.md](BENCHMARKS.md) shows the parser speed and the memory use
+relative to `ghc-lib-parser`, measured on a Stackage snapshot.
+
+Run `just benchmarks` (or `nix run .#generate-benchmarks`) to measure again and
+write a new `BENCHMARKS.md`. The tool downloads the snapshot packages, so the
+first run takes a long time.

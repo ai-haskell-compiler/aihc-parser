@@ -26,6 +26,9 @@ progress-strict:
   cabal run -v0 lexer-progress -- --strict
   cabal run -v0 parser-extension-progress -- --strict
 
+benchmarks:
+  nix run .#generate-benchmarks
+
 fmt:
   nix develop --quiet --command bash -c 'while IFS= read -r -d "" file; do cabal-gild --mode format --io "$file"; done < <(find . -name "*.cabal" -not -path "*/dist-newstyle/*" -print0); ormolu --mode inplace $(find src test common app tooling -name "*.hs" -not -path "*/Test/Fixtures/*")'
 

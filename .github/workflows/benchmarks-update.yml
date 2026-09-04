@@ -1,0 +1,45 @@
+name: Benchmarks Update
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-benchmarks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      XDG_CACHE_HOME: ${{ github.workspace }}/.cache
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/nix-installer-action@c5a866b6ab867e88becbed4467b93592bce69f8a
+
+      - name: Cache Stackage and package downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            .cache/aihc/stackage
+            .cache/aihc/hackage
+          key: benchmarks-aihc-downloads-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            benchmarks-aihc-downloads-${{ runner.os }}-
+
+      - name: Generate benchmarks
+        run: nix run .#generate-benchmarks
+
+      - name: Open pull request for benchmark updates
+        uses: peter-evans/create-pull-request@v8
+        with:
+          commit-message: "chore(benchmarks): update relative benchmarks"
+          add-paths: |
+            BENCHMARKS.md
+          branch: "automation/benchmarks-update"
+          title: "chore(benchmarks): update relative benchmarks"
+          body: |
+            This PR was created automatically by the manual benchmarks workflow.
+
+            It updates `BENCHMARKS.md` with relative Stackage parser and CPP
+            benchmark ratios.
