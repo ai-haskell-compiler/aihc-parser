@@ -41,6 +41,24 @@
         pkgs.lib.isDerivation drv && drv.isHaskellLibrary or false;
       withoutProfiling = drv:
         hsLib.disableExecutableProfiling (hsLib.disableLibraryProfiling drv);
+      parserTestFlags = [
+        "--hide-successes"
+        "--quickcheck-tests"
+        "1000"
+        "--quickcheck-timeout"
+        "20s"
+        "--quickcheck-shrinks"
+        "10000"
+      ];
+      # Local packages are always built with tests and -Werror so that the
+      # `checks` outputs reuse the exact same derivations as `packages`,
+      # instead of forcing a second full compile of every local package.
+      withStrictChecks = testFlags: drv:
+        hsLib.overrideCabal drv (old: {
+          doCheck = true;
+          configureFlags = (old.configureFlags or []) ++ ["--ghc-options=-Werror"];
+          inherit testFlags;
+        });
       disableUpstreamChecks = builtins.mapAttrs (
         name: drv:
           if builtins.elem name localPackageNames || !(isOverridableHaskellDrv drv)
@@ -77,13 +95,13 @@
               } {})
             ));
             aihc-hackage =
-              hsLib.dontCheck (withoutProfiling (final.callCabal2nix
+              withStrictChecks [] (withoutProfiling (final.callCabal2nix
                   "aihc-hackage" (src + "/tooling/aihc-hackage") {}));
-            aihc-parser = withoutProfiling (final.callCabal2nix
+            aihc-parser = withStrictChecks parserTestFlags (withoutProfiling (final.callCabal2nix
               "aihc-parser"
-              src {});
+              src {}));
             aihc-parser-bench =
-              hsLib.dontCheck (withoutProfiling (mkSubpackage
+              hsLib.doCheck (withoutProfiling (mkSubpackage
                   "aihc-parser-bench" "tooling/aihc-parser-bench" ""));
             aihc-parser-compat =
               withoutProfiling (mkSubpackage
@@ -136,23 +154,6 @@
       pkgs = import nixpkgs {inherit system;};
       hsPkgs = mkHsPkgs pkgs;
       src = projectSource pkgs;
-      checkedParser = pkgs.haskell.lib.overrideCabal hsPkgs.aihc-parser (old: {
-        doCheck = true;
-        configureFlags = (old.configureFlags or []) ++ ["--ghc-options=-Werror"];
-        testFlags = [
-          "--hide-successes"
-          "--quickcheck-tests"
-          "1000"
-          "--quickcheck-timeout"
-          "20s"
-          "--quickcheck-shrinks"
-          "10000"
-        ];
-      });
-      checkedHackage = pkgs.haskell.lib.overrideCabal hsPkgs.aihc-hackage (old: {
-        doCheck = true;
-        configureFlags = (old.configureFlags or []) ++ ["--ghc-options=-Werror"];
-      });
       ghcEnv = hsPkgs.ghcWithPackages (p: [p.aihc-parser p.doctest]);
       parserProgress = pkgs.lib.getExe' hsPkgs.aihc-parser-tooling-common "parser-progress";
       lexerProgress = pkgs.lib.getExe' hsPkgs.aihc-parser-tooling-common "lexer-progress";
@@ -169,10 +170,10 @@
           touch "$out"
         '';
     in {
-      parser-tests = checkedParser;
-      parser-compat-tests = pkgs.haskell.lib.doCheck hsPkgs.aihc-parser-compat;
-      hackage-tests = checkedHackage;
-      parser-bench-tests = pkgs.haskell.lib.doCheck hsPkgs.aihc-parser-bench;
+      parser-tests = hsPkgs.aihc-parser;
+      parser-compat-tests = hsPkgs.aihc-parser-compat;
+      hackage-tests = hsPkgs.aihc-hackage;
+      parser-bench-tests = hsPkgs.aihc-parser-bench;
       doctest = sourceCheck "aihc-parser-doctest" [ghcEnv] ''
         packageDb=$(ghc --print-global-package-db)
         doctest -XGHC2021 -package-db="$packageDb" -isrc \
