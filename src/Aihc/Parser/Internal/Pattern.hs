@@ -128,20 +128,23 @@ asApatParser =
 
 nonAsApatParser :: TokParser Pattern
 nonAsApatParser = do
-  thAny <- thAnyEnabled
-  explicitNamespacesEnabled <- isExtensionEnabled ExplicitNamespaces
-  requiredTypeArgumentsEnabled <- isExtensionEnabled RequiredTypeArguments
-  typeAbstractionsEnabled <- isExtensionEnabled TypeAbstractions
   tok <- lookAhead anySingle
   case lexTokenKind tok of
-    TkTypeApp
-      | typeAbstractionsEnabled -> typeBinderPatternParser
+    TkTypeApp -> do
+      typeAbstractionsEnabled <- isExtensionEnabled TypeAbstractions
+      if typeAbstractionsEnabled then typeBinderPatternParser else varOrConPatternParser
     TkPrefixBang -> strictPatternParser
     TkPrefixTilde -> irrefutablePatternParser
-    TkKeywordType
-      | explicitNamespacesEnabled || requiredTypeArgumentsEnabled -> explicitTypePatternParser
+    TkKeywordType -> do
+      explicitNamespacesEnabled <- isExtensionEnabled ExplicitNamespaces
+      requiredTypeArgumentsEnabled <- isExtensionEnabled RequiredTypeArguments
+      if explicitNamespacesEnabled || requiredTypeArgumentsEnabled
+        then explicitTypePatternParser
+        else varOrConPatternParser
     TkQuasiQuote {} -> quasiQuotePatternParser
-    TkTHSplice | thAny -> thSplicePatternParser
+    TkTHSplice -> do
+      thAny <- thAnyEnabled
+      if thAny then thSplicePatternParser else varOrConPatternParser
     TkKeywordUnderscore -> wildcardPatternParser
     TkInteger {} -> literalPatternParser
     TkFloat {} -> literalPatternParser

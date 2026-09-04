@@ -76,9 +76,9 @@ module Aihc.Parser.Internal.Common
   )
 where
 
-import Aihc.Parser.Lex (LayoutState (..), LexToken (..), LexTokenKind (..), closeImplicitLayoutContext)
+import Aihc.Parser.Lex (LayoutState (..), LexToken (..), LexTokenKind (..), TokenOrigin (..), closeImplicitLayoutContext)
 import Aihc.Parser.Syntax
-import Aihc.Parser.Types (ParserErrorComponent (..), TokStream (..), mkFoundToken, tokStreamExtensionSet)
+import Aihc.Parser.Types (ParserErrorComponent (..), TokStream (..), mkFoundToken, setTokStreamLayout, setTokStreamPendingPragmas, tokStreamExtensionSet)
 import Control.Monad (guard)
 import Data.Char (isUpper)
 import Data.Functor (($>))
@@ -248,12 +248,7 @@ optionalHiddenPragma f = do
     (ignored, pragmaTok : rest)
       | Just result <- f pragmaTok -> do
           MP.updateParserState $ \st ->
-            st
-              { MP.stateInput =
-                  (MP.stateInput st)
-                    { tokStreamPendingPragmas = ignored <> rest
-                    }
-              }
+            st {MP.stateInput = setTokStreamPendingPragmas (ignored <> rest) (MP.stateInput st)}
           pure (Just result)
       | otherwise -> pure Nothing
     _ -> pure Nothing
@@ -596,6 +591,10 @@ contextItemParserWith typeParser typeAtomParser =
 
     -- \| Lookahead: check if there's a `::` at the top bracket depth.
     -- This avoids ambiguity with the bare constraint parser.
+    --
+    -- The scan stops at the first token that cannot be part of a context
+    -- item. Without these stops, a context-less head such as
+    -- @instance C T where ...@ scans through the whole instance body.
     hasKindSignatureAtTopLevel :: TokParser Bool
     hasKindSignatureAtTopLevel = MP.lookAhead (go 0)
       where
@@ -606,6 +605,7 @@ contextItemParserWith typeParser typeAtomParser =
             TkEOF -> pure False
             TkReservedDoubleColon | depth == 0 -> pure True
             TkReservedRightArrow | depth == 0 -> pure False
+            TkReservedDoubleArrow | depth == 0 -> pure False
             TkSpecialComma | depth == 0 -> pure False
             TkSpecialLParen -> go (depth + 1)
             TkSpecialRParen
@@ -619,6 +619,29 @@ contextItemParserWith typeParser typeAtomParser =
             TkSpecialRBracket
               | depth > 0 -> go (depth - 1)
               | otherwise -> pure False
+            TkSpecialLBrace
+              | lexTokenOrigin tok == InsertedLayout -> pure False
+            TkSpecialRBrace
+              | lexTokenOrigin tok == InsertedLayout -> pure False
+            TkSpecialSemicolon -> pure False
+            TkReservedEquals -> pure False
+            TkReservedPipe -> pure False
+            TkReservedLeftArrow -> pure False
+            TkKeywordWhere -> pure False
+            TkKeywordDeriving -> pure False
+            TkKeywordInstance -> pure False
+            TkKeywordClass -> pure False
+            TkKeywordData -> pure False
+            TkKeywordNewtype -> pure False
+            TkKeywordType -> pure False
+            TkKeywordImport -> pure False
+            TkKeywordModule -> pure False
+            TkKeywordLet -> pure False
+            TkKeywordIn -> pure False
+            TkKeywordDo -> pure False
+            TkKeywordOf -> pure False
+            TkKeywordThen -> pure False
+            TkKeywordElse -> pure False
             _ -> go depth
     constraintTypeParser = do
       first <- constraintTypeAppParser
@@ -910,13 +933,7 @@ closeImplicitLayout = do
       MP.updateParserState
         ( \s ->
             let input = MP.stateInput s
-             in s
-                  { MP.stateInput =
-                      input
-                        { tokStreamLayoutState = laySt'',
-                          tokStreamBuffer = inserted <> tokStreamBuffer input
-                        }
-                  }
+             in s {MP.stateInput = setTokStreamLayout laySt'' (inserted <> tokStreamBuffer input) input}
         )
       pure True
 

@@ -33,11 +33,10 @@ import Aihc.Parser.Internal.Type (typeParser, typeSignatureParser)
 import Aihc.Parser.Lex (LexToken)
 import Aihc.Parser.Syntax (Decl, Expr, ImportDecl, Module, ModuleHead, Pattern, Type)
 import Aihc.Parser.Types
-import Text.Megaparsec (runParser)
 
 runParserFromTokens :: TokParser a -> FilePath -> [LexToken] -> ParseResult a
 runParserFromTokens parser sourceName toks =
-  case runParser parser sourceName (mkTokStreamFromTokens toks) of
+  case runTokStreamParser parser sourceName (mkTokStreamFromTokens toks) of
     Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
     Right parsed -> ParseOk parsed
 

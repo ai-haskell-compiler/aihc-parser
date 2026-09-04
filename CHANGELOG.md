@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Made module parsing about 1.5x faster on the Stackage benchmark corpus and
+  reduced allocation by a third. The context-item kind-signature lookahead now
+  stops at declaration boundaries instead of scanning to the end of the
+  module, the token stream memoizes each step so lookahead and backtracking
+  no longer rerun the layout algorithm, and the lexer dispatches on the first
+  character of each token.
+
 ## [2.0.0.0] - 2026-09-03
 
 ### Changed

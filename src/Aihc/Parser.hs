@@ -48,7 +48,6 @@ import Data.Text.Encoding qualified as TE
 import Data.Word (Word8)
 import Prettyprinter (Doc, colon, defaultLayoutOptions, layoutPretty, pretty, vcat)
 import Prettyprinter.Render.String (renderString)
-import Text.Megaparsec (runParser)
 
 -- $setup
 -- >>> :set -XOverloadedStrings
@@ -88,7 +87,7 @@ defaultConfig =
 parseExpr :: ParserConfig -> Text -> ParseResult Expr
 parseExpr cfg input =
   let ts = mkTokStream (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-   in case runParser (exprParser <* eofTok) (parserSourceName cfg) ts of
+   in case runTokStreamParser (exprParser <* eofTok) (parserSourceName cfg) ts of
         Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
         Right expr -> ParseOk expr
 
@@ -102,7 +101,7 @@ parseExpr cfg input =
 parsePattern :: ParserConfig -> Text -> ParseResult Pattern
 parsePattern cfg input =
   let ts = mkTokStream (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-   in case runParser (patternParser <* eofTok) (parserSourceName cfg) ts of
+   in case runTokStreamParser (patternParser <* eofTok) (parserSourceName cfg) ts of
         Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
         Right pat -> ParseOk pat
 
@@ -116,7 +115,7 @@ parsePattern cfg input =
 parseSignatureType :: ParserConfig -> Text -> ParseResult Type
 parseSignatureType cfg input =
   let ts = mkTokStream (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-   in case runParser (typeSignatureParser <* eofTok) (parserSourceName cfg) ts of
+   in case runTokStreamParser (typeSignatureParser <* eofTok) (parserSourceName cfg) ts of
         Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
         Right ty -> ParseOk ty
 
@@ -133,7 +132,7 @@ parseSignatureType cfg input =
 parseType :: ParserConfig -> Text -> ParseResult Type
 parseType cfg input =
   let ts = mkTokStream (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-   in case runParser (typeParser <* eofTok) (parserSourceName cfg) ts of
+   in case runTokStreamParser (typeParser <* eofTok) (parserSourceName cfg) ts of
         Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
         Right ty -> ParseOk ty
 
@@ -144,7 +143,7 @@ parseType cfg input =
 parseDecl :: ParserConfig -> Text -> ParseResult Decl
 parseDecl cfg input =
   let ts = mkTokStream (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-   in case runParser (declParser <* eofTok) (parserSourceName cfg) ts of
+   in case runTokStreamParser (declParser <* eofTok) (parserSourceName cfg) ts of
         Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
         Right decl -> ParseOk decl
 
@@ -168,7 +167,7 @@ parseModule cfg input =
         modu <- moduleParser
         errs <- drainParseErrors
         pure (errs, modu)
-   in case runParser parser (parserSourceName cfg) ts of
+   in case runTokStreamParser parser (parserSourceName cfg) ts of
         Left bundle ->
           ( parseErrorBundleToSpannedText bundle,
             Module

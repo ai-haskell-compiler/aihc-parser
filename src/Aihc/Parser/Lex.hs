@@ -75,6 +75,7 @@ import Data.Char (GeneralCategory (..), generalCategory, isAscii, isAsciiLower, 
 import Data.Maybe (fromMaybe, isJust)
 import Data.Text (Text, pattern Empty, pattern (:<))
 import Data.Text qualified as T
+import Data.Text.Unsafe qualified as TU
 
 lexTokens :: Text -> [LexToken]
 lexTokens = lexTokensWithSourceNameAndExtensions "<input>" []
@@ -139,7 +140,10 @@ skipTrivia = go
             Empty -> SkipDone st
             c :< _
               | isHaskellWhitespace c ->
-                  go (markHadTrivia (consumeWhile isHaskellWhitespace st))
+                  go (skipWhitespace st)
+              -- Only '-', '{', and '#' can start trivia; other characters
+              -- begin a token.
+              | c /= '-' && c /= '{' && c /= '#' -> SkipDone st
             _
               | Just rest <- T.stripPrefix "--" inp,
                 isLineComment rest ->
@@ -195,6 +199,34 @@ lexPragma st
 
 nextToken :: LexerEnv -> LexerState -> (LexToken, LexerState)
 nextToken env st =
+  -- Dispatch on the first character to skip alternatives that cannot match.
+  -- Each branch keeps the relative order of the general chain below, so the
+  -- token produced is the same as the one the chain would produce.
+  case lexerInput st of
+    c :< _
+      | isAsciiLower c || isAsciiUpper c || c == '_' ->
+          fromMaybe (lexErrorToken st "unexpected character") (lexIdentifier env st)
+      | isDigit c ->
+          fromMaybe (lexErrorToken st "unexpected character") $
+            lexHexFloat env st
+              <|> lexFloat env st
+              <|> lexIntBase env st
+              <|> lexInt env st
+      | c == '(' || c == ')' || c == ']' || c == '}' || c == ',' || c == ';' || c == '`' ->
+          fromMaybe (lexErrorToken st "unexpected character") (lexSymbol env st)
+      | isPlainOperatorStart c ->
+          fromMaybe (lexErrorToken st "unexpected character") (lexOperator env st)
+    _ -> nextTokenGeneral env st
+
+-- | Symbolic characters that only 'lexOperator' can start a token with.
+-- The characters handled by earlier alternatives in 'nextTokenGeneral'
+-- (@-@, @!@, @~@, @%@, @@@, @#@, @$@, @?@, @|@, @'@, @"@) are excluded.
+isPlainOperatorStart :: Char -> Bool
+isPlainOperatorStart c =
+  c == '=' || c == '<' || c == '>' || c == '.' || c == '*' || c == '+' || c == '&' || c == '^' || c == '/' || c == '\\' || c == ':'
+
+nextTokenGeneral :: LexerEnv -> LexerState -> (LexToken, LexerState)
+nextTokenGeneral env st =
   -- Inline chain of alternatives with no intermediate list or closure allocation.
   -- (<|>) for Maybe short-circuits on the first Just without allocating.
   fromMaybe (lexErrorToken st "unexpected character") $
@@ -265,8 +297,8 @@ lexIdentifier env st =
       | isIdentStart c ->
           let hasMagicHash = hasExt MagicHash env
               (seg, rest0) = consumeIdentTail hasMagicHash rest
-              firstChunk = T.take (1 + T.length seg) (lexerInput st)
-              (consumed, rest1, isQualified) = gatherQualified hasMagicHash firstChunk rest0
+              firstChunk = TU.takeWord8 (utf8CharWidth c + TU.lengthWord8 seg) (lexerInput st)
+              (consumed, rest1, isQualified) = gatherQualified hasMagicHash False firstChunk rest0
            in case (isQualified || isConIdStart c, rest1) of
                 (True, '.' :< dotRest@(opChar :< _))
                   | isSymbolicOpChar opChar ->
@@ -285,17 +317,18 @@ lexIdentifier env st =
                    in Just (mkToken st st' consumed kind, st')
     _ -> Nothing
   where
-    gatherQualified :: Bool -> Text -> Text -> (Text, Text, Bool)
-    gatherQualified hasMH acc chars =
+    -- The Bool accumulator records whether a qualifier segment was added.
+    gatherQualified :: Bool -> Bool -> Text -> Text -> (Text, Text, Bool)
+    gatherQualified hasMH qualified acc chars =
       case chars of
         '.' :< dotRest@(c' :< more)
           | isIdentStart c',
             not (T.isSuffixOf "#" acc),
             isConIdStart (T.head acc) ->
               let (seg, rest) = consumeIdentTail hasMH more
-                  segWithHead = T.take (1 + T.length seg) dotRest
-               in gatherQualified hasMH (acc <> "." <> segWithHead) rest
-        _ -> (acc, chars, T.any (== '.') acc)
+                  segWithHead = TU.takeWord8 (utf8CharWidth c' + TU.lengthWord8 seg) dotRest
+               in gatherQualified hasMH True (acc <> "." <> segWithHead) rest
+        _ -> (acc, chars, qualified)
 
     -- Split a qualified identifier into (module part, name part).
     -- E.g. "Data.Maybe." ++ "++" -> ("Data.Maybe", "++")
