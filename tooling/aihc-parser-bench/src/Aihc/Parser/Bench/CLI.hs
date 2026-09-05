@@ -8,6 +8,7 @@ module Aihc.Parser.Bench.CLI
     BenchOptions (..),
     ReportOptions (..),
     MeasureOptions (..),
+    CoverageOptions (..),
     ParserChoice (..),
     OutputFormat (..),
     FilterOptions (..),
@@ -84,12 +85,21 @@ data MeasureOptions = MeasureOptions
   }
   deriving (Eq, Show)
 
+-- | Options for the coverage subcommand.
+data CoverageOptions = CoverageOptions
+  { coverageSnapshot :: !String,
+    coverageOffline :: !Bool,
+    coverageVerbose :: !Bool
+  }
+  deriving (Eq, Show)
+
 -- | Top-level command.
 data Command
   = CmdGenerate !GenerateOptions
   | CmdBench !BenchOptions
   | CmdReport !ReportOptions
   | CmdMeasure !MeasureOptions
+  | CmdCoverage !CoverageOptions
   deriving (Show)
 
 -- | Top-level options.
@@ -123,6 +133,12 @@ commandParser =
             (CmdGenerate <$> generateParser)
             (progDesc "Generate a tarball of Haskell sources from Stackage")
         )
+        <> command
+          "coverage"
+          ( info
+              (CmdCoverage <$> coverageOptionsParser)
+              (progDesc "Report how many Stackage packages aihc-parser parses")
+          )
         <> command
           "bench"
           ( info
@@ -321,4 +337,24 @@ measureOptionsParser =
       parseParserChoice
       ( long "parser"
           <> metavar "PARSER"
+      )
+
+coverageOptionsParser :: Parser CoverageOptions
+coverageOptionsParser =
+  CoverageOptions
+    <$> strOption
+      ( long "snapshot"
+          <> metavar "NAME"
+          <> value "lts-24.36"
+          <> showDefault
+          <> help "Stackage snapshot name"
+      )
+    <*> switch
+      ( long "offline"
+          <> help "Only use cached packages"
+      )
+    <*> switch
+      ( long "verbose"
+          <> short 'v'
+          <> help "Print every package that fails to parse"
       )

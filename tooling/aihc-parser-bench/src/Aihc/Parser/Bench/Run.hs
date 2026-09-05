@@ -8,10 +8,12 @@ import Aihc.Parser.Bench.Benchmark (runBenchmark)
 import Aihc.Parser.Bench.CLI
   ( BenchOptions (..),
     Command (..),
+    CoverageOptions (..),
     GenerateOptions (..),
     Options (..),
     OutputFormat (..),
   )
+import Aihc.Parser.Bench.Coverage (formatCoverageSummary, measureCoverage)
 import Aihc.Parser.Bench.Metrics (computeMetrics, formatBytes, formatCsv, formatCsvHeader, formatHuman, formatJson)
 import Aihc.Parser.Bench.Report (runParserMeasurement, runReport)
 import Aihc.Parser.Bench.Tarball (FilterReason (..), GenerateResult (..), PackageSpec (..), formatPackage, generateTarball)
@@ -27,6 +29,20 @@ run opts =
     CmdBench benchOpts -> runBench benchOpts
     CmdReport reportOpts -> runReport reportOpts
     CmdMeasure measureOpts -> runParserMeasurement measureOpts
+    CmdCoverage coverageOpts -> runCoverage coverageOpts
+
+-- | Run the coverage command.
+runCoverage :: CoverageOptions -> IO ()
+runCoverage opts = do
+  result <- measureCoverage opts
+  case result of
+    Left err -> do
+      hPutStrLn stderr $ "Error: " ++ err
+      exitFailure
+    Right summary -> do
+      putStrLn ""
+      mapM_ putStrLn (formatCoverageSummary (coverageSnapshot opts) summary)
+      exitSuccess
 
 -- | Run the generate command.
 runGenerate :: GenerateOptions -> IO ()

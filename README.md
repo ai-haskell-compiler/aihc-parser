@@ -11,6 +11,19 @@ back to source code.
 Its goal is to accept exactly the same Haskell as GHC. There are currently no
 known compatibility bugs; if you find one, please report it.
 
+## Status
+
+| Metric | Progress |
+| --- | ---: |
+| Parser tests | <!-- AUTO-GENERATED: START parser-progress --> `2373/2373` (`100.00%`) ●●●●● <!-- AUTO-GENERATED: END parser-progress --> |
+| Lexer tests | <!-- AUTO-GENERATED: START lexer-progress --> `107/107` (`100.00%`) ●●●●● <!-- AUTO-GENERATED: END lexer-progress --> |
+| Stackage packages parsed | <!-- AUTO-GENERATED: START stackage-progress --> `3295/3327` (`99.04%`) ●●●●○ <!-- AUTO-GENERATED: END stackage-progress --> |
+
+A weekly workflow updates these numbers. Stackage coverage shows how many
+packages of a Stackage snapshot `aihc-parser` accepts. A package is a pass if
+the parser accepts each source file that the `.cabal` file declares. Packages
+that do not download, or that declare no Haskell sources, are not counted.
+
 ## A Quick Taste
 
 ```console
@@ -66,6 +79,11 @@ generated syntax. The core properties are:
 
 Run the complete local CI suite with `just check`, or the hermetic suite with
 `nix flake check`. Run `just qc` for continuous deep QuickCheck fuzzing.
+
+Run `just reports` (or `nix run .#generate-reports`) to update the status table
+and [aihc-parser-supported-extensions.md](docs/aihc-parser-supported-extensions.md).
+Run `just stackage-coverage` to measure the Stackage coverage only. Both
+commands download the snapshot packages, so the first run takes a long time.
 
 ## Performance
 

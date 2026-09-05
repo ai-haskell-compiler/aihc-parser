@@ -25,6 +25,7 @@
           ./app
           ./aihc-parser-compat
           ./tooling
+          ./scripts
         ];
       };
     mkHsPkgs = pkgs: let
@@ -126,7 +127,51 @@
       pkgs = import nixpkgs {inherit system;};
       hsPkgs = mkHsPkgs pkgs;
       benchExe = pkgs.lib.getExe' hsPkgs.aihc-parser-bench "aihc-parser-bench";
+      toolingExe = name: pkgs.lib.getExe' hsPkgs.aihc-parser-tooling-common name;
+      mkProgressApp = name: description: {
+        type = "app";
+        program = toolingExe name;
+        meta.description = description;
+      };
     in {
+      parser-progress = mkProgressApp "parser-progress" "Report parser test progress";
+      lexer-progress = mkProgressApp "lexer-progress" "Report lexer test progress";
+      parser-extension-progress = mkProgressApp "parser-extension-progress" "Report per-extension parser test progress";
+
+      stackage-coverage = {
+        type = "app";
+        program = "${pkgs.writeShellApplication {
+          name = "stackage-coverage";
+          text = ''
+            set -euo pipefail
+            exec ${benchExe} coverage "$@"
+          '';
+        }}/bin/stackage-coverage";
+        meta.description = "Report how many Stackage packages aihc-parser parses";
+      };
+
+      generate-reports = {
+        type = "app";
+        program = "${pkgs.writeShellApplication {
+          name = "generate-reports";
+          runtimeInputs = [pkgs.bash pkgs.gawk pkgs.gnugrep pkgs.coreutils];
+          text = ''
+            set -euo pipefail
+            test -f aihc-parser.cabal || {
+              echo "Run this app from the repository root." >&2
+              exit 1
+            }
+            PARSER_PROGRESS_CMD=${toolingExe "parser-progress"} \
+            LEXER_PROGRESS_CMD=${toolingExe "lexer-progress"} \
+            PARSER_EXTENSION_PROGRESS_CMD="${toolingExe "parser-extension-progress"} --markdown" \
+            PARSER_EXTENSION_PROGRESS_TEXT_CMD=${toolingExe "parser-extension-progress"} \
+            STACKAGE_COVERAGE_CMD="${benchExe} coverage" \
+              exec ./scripts/update-generated-content.sh "''${1:---update}"
+          '';
+        }}/bin/generate-reports";
+        meta.description = "Regenerate the README status table and the extension support docs";
+      };
+
       generate-benchmarks = {
         type = "app";
         program = "${pkgs.writeShellApplication {
