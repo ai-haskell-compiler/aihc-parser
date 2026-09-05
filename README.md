@@ -17,12 +17,14 @@ known compatibility bugs; if you find one, please report it.
 | --- | ---: |
 | Parser tests | <!-- AUTO-GENERATED: START parser-progress --> `2373/2373` (`100.00%`) ●●●●● <!-- AUTO-GENERATED: END parser-progress --> |
 | Lexer tests | <!-- AUTO-GENERATED: START lexer-progress --> `107/107` (`100.00%`) ●●●●● <!-- AUTO-GENERATED: END lexer-progress --> |
-| Stackage packages parsed | <!-- AUTO-GENERATED: START stackage-progress --> `3295/3327` (`99.04%`) ●●●●○ <!-- AUTO-GENERATED: END stackage-progress --> |
+| Stackage packages parsed | <!-- AUTO-GENERATED: START stackage-progress --> `3327/3327` (`100.00%`) ●●●●● <!-- AUTO-GENERATED: END stackage-progress --> |
 
 A weekly workflow updates these numbers. Stackage coverage shows how many
 packages of a Stackage snapshot `aihc-parser` accepts. A package is a pass if
 the parser accepts each source file that the `.cabal` file declares. Packages
-that do not download, or that declare no Haskell sources, are not counted.
+that do not download, or that declare no Haskell sources, are not counted, and
+neither are individual files that `ghc-lib-parser` rejects as well: GHC is the
+reference, so a file GHC cannot parse says nothing about `aihc-parser`.
 
 ## A Quick Taste
 

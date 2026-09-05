@@ -261,10 +261,10 @@ processPackage manager opts pkg = do
                     let relPath = formatPackage pkg </> makeRelative pkgDir file
                         -- Look up extension info for this file
                         info = Map.lookup (makeRelative pkgDir file) fileInfoMap
-                        exts = maybe [] (\(e, _, _, _) -> e) info
-                        cppOpts = maybe [] (\(_, c, _, _) -> c) info
-                        lang = info >>= \(_, _, l, _) -> l
-                        deps = maybe [] (\(_, _, _, d) -> d) info
+                        exts = maybe [] HC.fileInfoExtensions info
+                        cppOpts = maybe [] HC.fileInfoCppOptions info
+                        lang = info >>= HC.fileInfoLanguage
+                        deps = maybe [] HC.fileInfoDependencies info
                     -- Preprocess the source if CPP is enabled
                     let preprocessedContents = preprocessSource pkg exts cppOpts lang deps contents
                     pure
@@ -293,10 +293,10 @@ processPackage manager opts pkg = do
                     let relPath = formatPackage pkg </> makeRelative pkgDir file
                         -- Look up extension info for this file
                         info = Map.lookup (makeRelative pkgDir file) fileInfoMap
-                        exts = maybe [] (\(e, _, _, _) -> e) info
-                        cppOpts = maybe [] (\(_, c, _, _) -> c) info
-                        lang = info >>= \(_, _, l, _) -> l
-                        deps = maybe [] (\(_, _, _, d) -> d) info
+                        exts = maybe [] HC.fileInfoExtensions info
+                        cppOpts = maybe [] HC.fileInfoCppOptions info
+                        lang = info >>= HC.fileInfoLanguage
+                        deps = maybe [] HC.fileInfoDependencies info
                     pure
                       TarballEntry
                         { entryPackage = pkg,
@@ -310,7 +310,7 @@ processPackage manager opts pkg = do
                         }
 
                   -- Collect CPP include files for all Haskell entries
-                  includeFileMap <- collectIncludeFiles pkgDir pkg entries
+                  includeFileMap <- collectIncludeFiles pkgDir pkg fileInfoMap entries
                   let includeEntries = buildIncludeEntries pkg includeFileMap
 
                   -- Check filters (only for Haskell files, with include map for CPP)
@@ -320,8 +320,10 @@ processPackage manager opts pkg = do
                     -- Include the .cabal file along with the Haskell files and include files
                     Nothing -> pure (Right (cabalEntry : entries ++ includeEntries))
 
--- | Find and read the .cabal file, returning the entry and a map of file paths to their extensions
-findAndReadCabalFile :: FilePath -> PackageSpec -> IO (TarballEntry, Map.Map FilePath ([String], [String], Maybe String, [Text]))
+-- | Find and read the .cabal file, returning the entry and a map from
+-- package-relative source path to the build information the cabal file
+-- declares for it.
+findAndReadCabalFile :: FilePath -> PackageSpec -> IO (TarballEntry, Map.Map FilePath HC.FileInfo)
 findAndReadCabalFile pkgDir pkg = do
   cabalFiles <- findCabalFilesFlat pkgDir
   cabalFile <- case cabalFiles of
@@ -346,8 +348,9 @@ findAndReadCabalFile pkgDir pkg = do
   fileInfoMap <- parseCabalForExtensions pkgDir cabalFile
   pure (cabalEntry, fileInfoMap)
 
--- | Parse a cabal file and return a map from file paths to (extensions, cppOptions, language, dependencies)
-parseCabalForExtensions :: FilePath -> FilePath -> IO (Map.Map FilePath ([String], [String], Maybe String, [Text]))
+-- | Parse a cabal file and return a map from package-relative source path to
+-- that file's build information.
+parseCabalForExtensions :: FilePath -> FilePath -> IO (Map.Map FilePath HC.FileInfo)
 parseCabalForExtensions pkgDir cabalFile = do
   cabalBytes <- BS.readFile cabalFile
   let parseResult = Cabal.runParseResult (Cabal.parseGenericPackageDescription cabalBytes)
@@ -358,22 +361,19 @@ parseCabalForExtensions pkgDir cabalFile = do
       pure Map.empty
     Right gpd -> do
       fileInfos <- HC.collectComponentFiles gpd (takeDirectory cabalFile)
-      -- Build map from relative paths to their (extensions, cppOptions, language, dependencies)
       pure $
         Map.fromList
-          [ ( makeRelative pkgDir (HC.fileInfoPath fi),
-              (HC.fileInfoExtensions fi, HC.fileInfoCppOptions fi, HC.fileInfoLanguage fi, HC.fileInfoDependencies fi)
-            )
-          | fi <- fileInfos
-          ]
+          [(makeRelative pkgDir (HC.fileInfoPath fi), fi) | fi <- fileInfos]
 
 -- | Collect CPP include files for a list of Haskell tarball entries.
 -- Returns a map from tarball-relative path to file contents.
-collectIncludeFiles :: FilePath -> PackageSpec -> [TarballEntry] -> IO (Map.Map FilePath Text)
-collectIncludeFiles pkgDir pkg entries = do
+collectIncludeFiles :: FilePath -> PackageSpec -> Map.Map FilePath HC.FileInfo -> [TarballEntry] -> IO (Map.Map FilePath Text)
+collectIncludeFiles pkgDir pkg fileInfoMap entries = do
   includeLists <- forM (filter isHaskellEntry entries) $ \e -> do
-    let absFile = pkgDir </> makeRelative (formatPackage pkg) (entryFilePath e)
-    pairs <- collectCppIncludes absFile (entryExtensions e) (entryCppOptions e) (entryLanguage e) (entryDependencies e) (entryContents e)
+    let relFile = makeRelative (formatPackage pkg) (entryFilePath e)
+        absFile = pkgDir </> relFile
+        includeDirs = maybe [] HC.fileInfoIncludeDirs (Map.lookup relFile fileInfoMap)
+    pairs <- collectCppIncludes pkgDir includeDirs absFile (entryExtensions e) (entryCppOptions e) (entryLanguage e) (entryDependencies e) (entryContents e)
     pure [(formatPackage pkg </> makeRelative pkgDir absPath, text) | (absPath, text) <- pairs]
   pure $ Map.fromList (concat includeLists)
 

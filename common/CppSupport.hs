@@ -1,5 +1,3 @@
-{-# LANGUAGE OverloadedStrings #-}
-
 module CppSupport
   ( preprocessForParser,
     preprocessForParserIfEnabled,
@@ -20,16 +18,13 @@ import Aihc.Cpp
     preprocess,
   )
 import Aihc.Hackage.Cpp qualified as HackageCpp
+import Aihc.Hackage.Util (normalizeSourceForParser)
 import Aihc.Parser.Syntax (Extension (CPP), ExtensionSetting (..), ModuleHeaderPragmas (..))
 import Aihc.Parser.Token (readModuleHeaderExtensions, readModuleHeaderPragmas)
 import Data.ByteString (ByteString)
-import Data.Char (toLower)
 import Data.Functor.Identity (Identity (..), runIdentity)
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
-import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
-import System.FilePath (takeExtension)
 
 preprocessForParser :: (Monad m) => FilePath -> [Text] -> (IncludeRequest -> m (Maybe ByteString)) -> Text -> m Result
 preprocessForParser inputFile deps resolveInclude source =
@@ -87,38 +82,3 @@ cppEnabledInSettings = foldl apply False
         EnableExtension CPP -> True
         DisableExtension CPP -> False
         _ -> enabled
-
-normalizeSourceForParser :: FilePath -> Text -> Text
-normalizeSourceForParser inputFile =
-  unliterateIfNeeded inputFile . stripLeadingBom
-
-stripLeadingBom :: Text -> Text
-stripLeadingBom txt =
-  fromMaybe txt (T.stripPrefix "\xfeff" txt)
-
-unliterateIfNeeded :: FilePath -> Text -> Text
-unliterateIfNeeded inputFile source
-  | map toLower (takeExtension inputFile) /= ".lhs" = source
-  | otherwise =
-      let ls = T.lines source
-       in if any (\line -> T.strip line == "\\begin{code}") ls
-            then T.unlines (unlitLatex False ls)
-            else T.unlines (map unlitBirdLine ls)
-  where
-    -- Replace the leading '>' with a space instead of stripping it.
-    -- This preserves original column positions, which is critical for
-    -- layout-sensitive parsing when tabs are present.  Stripping "> "
-    -- shifts columns by 2, but tab stops depend on absolute column
-    -- position, so tab-aligned code and space-aligned code would end
-    -- up at different columns after the shift.
-    unlitBirdLine line =
-      case T.stripPrefix ">" line of
-        Just _rest -> " " <> _rest
-        Nothing -> ""
-
-    unlitLatex _ [] = []
-    unlitLatex inCode (line : rest)
-      | T.strip line == "\\begin{code}" = "" : unlitLatex True rest
-      | T.strip line == "\\end{code}" = "" : unlitLatex False rest
-      | inCode = line : unlitLatex inCode rest
-      | otherwise = "" : unlitLatex inCode rest

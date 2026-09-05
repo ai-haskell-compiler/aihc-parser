@@ -10,9 +10,16 @@ module Aihc.Hackage.Cpp
     cppMacrosFromOptions,
     minVersionMacroNamesFromDeps,
     injectSyntheticCppMacros,
+
+    -- * Include resolution
+    includeCandidates,
+    resolveIncludeBestEffort,
   )
 where
 
+import Aihc.Cpp (IncludeKind (..), IncludeRequest (..))
+import Data.ByteString qualified as BS
+import Data.List (nub)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as M
 import Data.Maybe (mapMaybe)
@@ -20,6 +27,8 @@ import Data.Set (Set)
 import Data.Set qualified as S
 import Data.Text (Text)
 import Data.Text qualified as T
+import System.Directory (doesFileExist)
+import System.FilePath (isAbsolute, makeRelative, normalise, splitDirectories, takeDirectory, (</>))
 
 -- | GHC version macros that every preprocessed file sees.
 -- Mirrors what GHC itself defines when invoking @cpp@.
@@ -127,3 +136,62 @@ cppDefinedOrUndefinedFromOptions =
       case option of
         CppDefine name _ -> S.insert name acc
         CppUndef name -> S.insert name acc
+
+--------------------------------------------------------------------------------
+-- Include resolution
+--------------------------------------------------------------------------------
+
+-- | Read the first existing candidate for a @#include@ request, or
+-- 'Nothing' when the header is not shipped with the package.
+resolveIncludeBestEffort :: FilePath -> [FilePath] -> FilePath -> IncludeRequest -> IO (Maybe BS.ByteString)
+resolveIncludeBestEffort packageRoot includeDirs currentFile req = do
+  firstExisting <- firstExistingPath (includeCandidates packageRoot includeDirs currentFile req)
+  case firstExisting of
+    Nothing -> pure Nothing
+    Just includeFile -> Just <$> BS.readFile includeFile
+
+-- | Where a @#include@ could resolve to, most specific first. @includeDirs@
+-- comes from the component's @include-dirs@ field; without it headers kept
+-- outside the source tree, such as @conduit@\'s @fusion-macros.h@, are never
+-- found and the macro calls survive into the parser.
+includeCandidates :: FilePath -> [FilePath] -> FilePath -> IncludeRequest -> [FilePath]
+includeCandidates packageRoot includeDirs currentFile req =
+  map normalise $ nub [dir </> includePath req | dir <- searchDirs]
+  where
+    includeDir = takeDirectory (includeFrom req)
+    sourceRelDir = takeDirectory (makeRelative packageRoot currentFile)
+    packageAncestors = ancestorDirs sourceRelDir
+    localRoots =
+      [ takeDirectory currentFile,
+        packageRoot </> sourceRelDir,
+        packageRoot </> includeDir
+      ]
+    systemRoots =
+      includeDirs
+        <> [ packageRoot </> "include",
+             packageRoot </> "includes",
+             packageRoot </> "cbits",
+             packageRoot
+           ]
+    searchDirs =
+      case includeKind req of
+        IncludeLocal -> localRoots <> map (packageRoot </>) packageAncestors <> systemRoots
+        IncludeSystem -> systemRoots <> localRoots <> map (packageRoot </>) packageAncestors
+
+ancestorDirs :: FilePath -> [FilePath]
+ancestorDirs path =
+  case filter (not . null) (splitDirectories path) of
+    [] -> []
+    parts ->
+      [ foldl (</>) "." (take n parts)
+      | n <- [length parts, length parts - 1 .. 1]
+      ]
+
+firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
+firstExistingPath [] = pure Nothing
+firstExistingPath (candidate : rest) = do
+  let path = if isAbsolute candidate then candidate else normalise candidate
+  exists <- doesFileExist path
+  if exists
+    then pure (Just path)
+    else firstExistingPath rest

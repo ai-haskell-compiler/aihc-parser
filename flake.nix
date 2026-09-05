@@ -263,6 +263,8 @@
           pkgs.ormolu
           pkgs.hlint
           pkgs.haskellPackages.cabal-gild
+          pkgs.pkg-config
+          pkgs.zlib
         ];
       };
     });
