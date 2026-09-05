@@ -6,18 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-
-- Restored 100% Stackage coverage (3327/3327 packages, up from 3295/3327).
-  The coverage tooling, not the parser, had regressed: it handed literate
-  Haskell to the parser without unliterating it, which rejected the 22
-  snapshot packages that ship `.lhs` sources, and it resolved `#include`
-  directives only next to the including file, so the CPP macros that
-  `conduit`, `hashmap`, `thyme` and `ghc-internal` keep in a header behind
-  `include-dirs` were never expanded. Unliterating and the package-wide
-  header search now live in `aihc-hackage`, shared by the test suite and the
-  benchmark tooling instead of being implemented twice.
-
 ### Changed
 
 - Made module parsing about 1.5x faster on the Stackage benchmark corpus and
@@ -26,12 +14,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   module, the token stream memoizes each step so lookahead and backtracking
   no longer rerun the layout algorithm, and the lexer dispatches on the first
   character of each token.
-- Stackage coverage no longer counts files that `ghc-lib-parser` rejects as
-  well. GHC is the reference, so a file GHC cannot parse -- such as
-  `ghc`'s `GHC/Builtin/PrimOps.hs`, which needs headers generated during a
-  GHC build -- says nothing about `aihc-parser`. The `coverage` command
-  reports how many files were set aside this way, and takes a repeatable
-  `--package` flag for checking a single package.
 
 ## [2.0.0.0] - 2026-09-03
 
