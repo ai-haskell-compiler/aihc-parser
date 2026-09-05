@@ -1,6 +1,9 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 -- | Shared file-system utilities for Hackage package processing.
 module Aihc.Hackage.Util
   ( readTextFileLenient,
+    normalizeSourceForParser,
     existingPaths,
     dedupeExistingFiles,
     findCabalFiles,
@@ -14,8 +17,9 @@ import Control.Monad (forM)
 import Data.ByteString qualified as BS
 import Data.Char (toLower)
 import Data.List (isPrefixOf, isSuffixOf, nub, sortOn)
-import Data.Maybe (catMaybes)
+import Data.Maybe (catMaybes, fromMaybe)
 import Data.Text (Text)
+import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8With)
 import Data.Text.Encoding.Error (lenientDecode)
 import Distribution.ModuleName (ModuleName, toFilePath)
@@ -26,13 +30,51 @@ import System.Directory
     doesFileExist,
     listDirectory,
   )
-import System.FilePath (makeRelative, normalise, splitDirectories, takeFileName, (<.>), (</>))
+import System.FilePath (makeRelative, normalise, splitDirectories, takeExtension, takeFileName, (<.>), (</>))
 
 -- | Read a file as 'Text' with lenient UTF-8 decoding.
 readTextFileLenient :: FilePath -> IO Text
 readTextFileLenient filePath = do
   bytes <- BS.readFile filePath
   pure (decodeUtf8With lenientDecode bytes)
+
+-- | Prepare a source file for a Haskell parser: drop a leading byte order
+-- mark and, for @.lhs@ files, strip the literate markup the way GHC's
+-- unlit step does.
+normalizeSourceForParser :: FilePath -> Text -> Text
+normalizeSourceForParser inputFile =
+  unliterateIfNeeded inputFile . stripLeadingBom
+
+stripLeadingBom :: Text -> Text
+stripLeadingBom txt =
+  fromMaybe txt (T.stripPrefix "\xfeff" txt)
+
+unliterateIfNeeded :: FilePath -> Text -> Text
+unliterateIfNeeded inputFile source
+  | map toLower (takeExtension inputFile) /= ".lhs" = source
+  | otherwise =
+      let ls = T.lines source
+       in if any (\line -> T.strip line == "\\begin{code}") ls
+            then T.unlines (unlitLatex False ls)
+            else T.unlines (map unlitBirdLine ls)
+  where
+    -- Replace the leading '>' with a space instead of stripping it.
+    -- This preserves original column positions, which is critical for
+    -- layout-sensitive parsing when tabs are present.  Stripping "> "
+    -- shifts columns by 2, but tab stops depend on absolute column
+    -- position, so tab-aligned code and space-aligned code would end
+    -- up at different columns after the shift.
+    unlitBirdLine line =
+      case T.stripPrefix ">" line of
+        Just rest -> " " <> rest
+        Nothing -> ""
+
+    unlitLatex _ [] = []
+    unlitLatex inCode (line : rest)
+      | T.strip line == "\\begin{code}" = "" : unlitLatex True rest
+      | T.strip line == "\\end{code}" = "" : unlitLatex False rest
+      | inCode = line : unlitLatex inCode rest
+      | otherwise = "" : unlitLatex inCode rest
 
 -- | Return only the paths that exist on disk, normalised.
 existingPaths :: [FilePath] -> IO [FilePath]

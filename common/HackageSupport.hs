@@ -18,21 +18,20 @@ module HackageSupport
   )
 where
 
-import Aihc.Cpp (Diagnostic (..), IncludeKind (..), IncludeRequest (..), Severity (..))
+import Aihc.Cpp (Diagnostic (..), IncludeRequest, Severity (..))
 import Aihc.Hackage.Cabal qualified as HC
+import Aihc.Hackage.Cpp qualified as HCpp
 import Aihc.Hackage.Download qualified as HD
 import Aihc.Hackage.Types qualified as HT
 import Aihc.Hackage.Util qualified as HU
 import Aihc.Parser.Syntax qualified as Syntax
 import Data.ByteString qualified as BS
-import Data.List (nub)
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Distribution.PackageDescription.Parsec (parseGenericPackageDescription, runParseResult)
 import Distribution.Types.GenericPackageDescription (GenericPackageDescription)
-import System.Directory (doesFileExist)
-import System.FilePath (isAbsolute, makeRelative, normalise, splitDirectories, takeDirectory, (</>))
+import System.FilePath (takeDirectory)
 
 -- | Download a Hackage package with verbose logging.
 downloadPackage :: String -> String -> IO FilePath
@@ -133,53 +132,7 @@ readTextFileLenient :: FilePath -> IO Text
 readTextFileLenient = HU.readTextFileLenient
 
 resolveIncludeBestEffort :: FilePath -> [FilePath] -> FilePath -> IncludeRequest -> IO (Maybe BS.ByteString)
-resolveIncludeBestEffort packageRoot includeDirs currentFile req = do
-  firstExisting <- firstExistingPath (includeCandidates packageRoot includeDirs currentFile req)
-  case firstExisting of
-    Nothing -> pure Nothing
-    Just includeFile -> Just <$> BS.readFile includeFile
-
-includeCandidates :: FilePath -> [FilePath] -> FilePath -> IncludeRequest -> [FilePath]
-includeCandidates packageRoot includeDirs currentFile req =
-  map normalise $ nub [dir </> includePath req | dir <- searchDirs]
-  where
-    includeDir = takeDirectory (includeFrom req)
-    sourceRelDir = takeDirectory (makeRelative packageRoot currentFile)
-    packageAncestors = ancestorDirs sourceRelDir
-    localRoots =
-      [ takeDirectory currentFile,
-        packageRoot </> sourceRelDir,
-        packageRoot </> includeDir
-      ]
-    systemRoots =
-      includeDirs
-        <> [ packageRoot </> "include",
-             packageRoot </> "includes",
-             packageRoot </> "cbits",
-             packageRoot
-           ]
-    searchDirs =
-      case includeKind req of
-        IncludeLocal -> localRoots <> map (packageRoot </>) packageAncestors <> systemRoots
-        IncludeSystem -> systemRoots <> localRoots <> map (packageRoot </>) packageAncestors
-
-ancestorDirs :: FilePath -> [FilePath]
-ancestorDirs path =
-  case filter (not . null) (splitDirectories path) of
-    [] -> []
-    parts ->
-      [ foldl (</>) "." (take n parts)
-      | n <- [length parts, length parts - 1 .. 1]
-      ]
-
-firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
-firstExistingPath [] = pure Nothing
-firstExistingPath (candidate : rest) = do
-  let path = if isAbsolute candidate then candidate else normalise candidate
-  exists <- doesFileExist path
-  if exists
-    then pure (Just path)
-    else firstExistingPath rest
+resolveIncludeBestEffort = HCpp.resolveIncludeBestEffort
 
 diagToText :: Diagnostic -> Text
 diagToText diag =

@@ -70,7 +70,6 @@ import GHC.Types.SrcLoc (mkRealSrcLoc)
 import GHC.Utils.Error (emptyDiagOpts, pprMessages)
 import GHC.Utils.Outputable (showSDocUnsafe)
 import Language.Haskell.Exts qualified as HSE
-import System.Directory (doesFileExist)
 import System.FilePath (normalise, takeDirectory, (</>))
 import Text.Read (readMaybe)
 
@@ -181,8 +180,11 @@ parseWithGhcExtsWithCpp noCpp includeMap filePath cabalExts cppOptions langName 
 -- 2. If CPP is enabled and noCpp is False, preprocess the source
 -- 3. Re-scan the (possibly preprocessed) source for final LANGUAGE pragmas
 prepareSourceAndExtensionsWithCpp :: Bool -> Map FilePath Text -> FilePath -> [String] -> [String] -> Maybe String -> [Text] -> Text -> (Text, [AihcSyntax.Extension])
-prepareSourceAndExtensionsWithCpp noCpp includeMap filePath cabalExts cppOptions langName deps source =
-  let -- Convert cabal extension names to settings
+prepareSourceAndExtensionsWithCpp noCpp includeMap filePath cabalExts cppOptions langName deps rawSource =
+  let -- Strip the BOM and, for .lhs files, the literate markup, exactly as
+      -- GHC's unlit pass does before the preprocessor sees the file.
+      source = HU.normalizeSourceForParser filePath rawSource
+      -- Convert cabal extension names to settings
       cabalSettings = mapMaybe (parseExtensionSettingName . T.pack) cabalExts
       -- Get initial extensions from LANGUAGE pragmas (before CPP)
       initialHeaderSettings = readModuleHeaderExtensions source
@@ -226,17 +228,28 @@ runCppWithIncludes includeMap filePath cppOptions deps source =
   where
     go (Cpp.Done result) = result
     go (Cpp.NeedInclude req k) =
-      let resolved = normalise (takeDirectory (Cpp.includeFrom req) </> Cpp.includePath req)
-          mContents = fmap TE.encodeUtf8 (Map.lookup resolved includeMap)
+      let mContents = fmap TE.encodeUtf8 (Map.lookup (includeMapKey req) includeMap)
        in go (k mContents)
+
+-- | The include map is keyed by the path an @#include@ names relative to the
+-- file that issued it. Where the header actually lives on disk is resolved
+-- once, when the map is built.
+includeMapKey :: Cpp.IncludeRequest -> FilePath
+includeMapKey req = normalise (takeDirectory (Cpp.includeFrom req) </> Cpp.includePath req)
 
 -- | Collect all CPP include files needed by a Haskell source file.
 -- Only runs CPP if the CPP extension is enabled for this file.
--- Returns (absolutePath, content) for all transitively included files.
 -- Uses the same GHC version macros and MIN_VERSION_* injection as stackage-progress.
-collectCppIncludes :: FilePath -> [String] -> [String] -> Maybe String -> [Text] -> Text -> IO [(FilePath, Text)]
-collectCppIncludes absFile cabalExts cppOptions langName deps source = do
-  let cabalSettings = mapMaybe (parseExtensionSettingName . T.pack) cabalExts
+--
+-- Headers are looked up along the package's whole search path, including the
+-- @include-dirs@ the @.cabal@ file declares, but the returned pairs are keyed
+-- by the naive @directory-of-includer \<\/\> include-path@ that
+-- 'runCppWithIncludes' recomputes when parsing. The map therefore acts as a
+-- small virtual file system that both halves agree on.
+collectCppIncludes :: FilePath -> [FilePath] -> FilePath -> [String] -> [String] -> Maybe String -> [Text] -> Text -> IO [(FilePath, Text)]
+collectCppIncludes packageRoot includeDirs absFile cabalExts cppOptions langName deps rawSource = do
+  let source = HU.normalizeSourceForParser absFile rawSource
+      cabalSettings = mapMaybe (parseExtensionSettingName . T.pack) cabalExts
       initialHeaderSettings = readModuleHeaderExtensions source
       initialSettings = cabalSettings <> initialHeaderSettings
       initialEdition = editionFromExtensionSettings initialSettings `mplus` (langName >>= parseLanguageEdition . T.pack)
@@ -258,16 +271,16 @@ collectCppIncludes absFile cabalExts cppOptions langName deps source = do
   where
     go acc (Cpp.Done _) = pure acc
     go acc (Cpp.NeedInclude req k) = do
-      let resolved = normalise (takeDirectory (Cpp.includeFrom req) </> Cpp.includePath req)
-      case Map.lookup resolved acc of
+      let key = includeMapKey req
+      case Map.lookup key acc of
         Just contents -> go acc (k (Just (TE.encodeUtf8 contents)))
         Nothing -> do
-          exists <- doesFileExist resolved
-          if not exists
-            then go acc (k Nothing)
-            else do
-              contents <- HU.readTextFileLenient resolved
-              go (Map.insert resolved contents acc) (k (Just (TE.encodeUtf8 contents)))
+          found <- HackageCpp.resolveIncludeBestEffort packageRoot includeDirs absFile req
+          case found of
+            Nothing -> go acc (k Nothing)
+            Just bytes -> do
+              let contents = TE.decodeUtf8Lenient bytes
+              go (Map.insert key contents acc) (k (Just bytes))
 
 --------------------------------------------------------------------------------
 -- HSE extension conversion

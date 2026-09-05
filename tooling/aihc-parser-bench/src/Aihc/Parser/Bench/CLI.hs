@@ -89,7 +89,9 @@ data MeasureOptions = MeasureOptions
 data CoverageOptions = CoverageOptions
   { coverageSnapshot :: !String,
     coverageOffline :: !Bool,
-    coverageVerbose :: !Bool
+    coverageVerbose :: !Bool,
+    -- | When non-empty, only these packages are checked.
+    coveragePackages :: ![String]
   }
   deriving (Eq, Show)
 
@@ -356,5 +358,12 @@ coverageOptionsParser =
     <*> switch
       ( long "verbose"
           <> short 'v'
-          <> help "Print every package that fails to parse"
+          <> help "Print every package that fails to parse, with its error"
+      )
+    <*> many
+      ( strOption
+          ( long "package"
+              <> metavar "NAME"
+              <> help "Only check this package (repeatable)"
+          )
       )

@@ -25,7 +25,8 @@ parserBenchCoverageTests =
             "Snapshot packages:  12",
             "Checked packages:   10",
             "Parse failures:     2",
-            "Skipped packages:   2"
+            "Skipped packages:   2",
+            "Files GHC rejects:  3"
           ]
           (drop 2 (init (formatCoverageSummary "lts-24.36" sampleResult)))
     ]
@@ -42,7 +43,8 @@ sampleResult =
       coverageSkipped =
         [ (pkg "gone", "download failed"),
           (pkg "empty", "no Haskell files")
-        ]
+        ],
+      coverageIgnoredFiles = 3
     }
   where
     pkg name = PackageSpec {pkgName = name, pkgVersion = "1.0"}

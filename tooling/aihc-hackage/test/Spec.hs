@@ -1,9 +1,12 @@
 module Main (main) where
 
+import Aihc.Cpp (IncludeKind (..), IncludeRequest (..))
 import Aihc.Hackage.Cabal qualified as HC
+import Aihc.Hackage.Cpp qualified as HCpp
 import Aihc.Hackage.Index (parseHackageIndex, parseHackageIndexUpdatedSince)
 import Aihc.Hackage.Stackage (parseSnapshotConstraints)
 import Aihc.Hackage.Types (PackageSpec (..))
+import Aihc.Hackage.Util (normalizeSourceForParser)
 import Codec.Archive.Tar qualified as Tar
 import Codec.Archive.Tar.Entry qualified as Tar
 import Codec.Compression.GZip qualified as GZip
@@ -56,6 +59,14 @@ main =
       testCase "detects packages that default to Haskell98" test_detectsHaskell98DefaultLanguage,
       testCase "ignores inactive Haskell98 default-language branches" test_ignoresInactiveHaskell98DefaultLanguage,
       testCase "detects active custom preprocessor options" test_detectsCustomPreprocessorOptions,
+      testCase "collects the include-dirs a component declares" test_collectsIncludeDirs,
+      testCase "finds a header that only include-dirs points at" test_resolvesIncludeFromIncludeDirs,
+      testCase "finds a header kept at the package root" test_resolvesIncludeFromPackageRoot,
+      testCase "leaves a plain .hs file alone" test_leavesNonLiterateSourceAlone,
+      testCase "strips a leading byte order mark" test_stripsByteOrderMark,
+      testCase "unliterates bird tracks in a .lhs file" test_unliteratesBirdTracks,
+      testCase "keeps bird-track columns so layout still lines up" test_unliteratePreservesColumns,
+      testCase "unliterates LaTeX code blocks in a .lhs file" test_unliteratesLatexCodeBlocks,
       QC.testProperty "dummy quickcheck property" prop_dummy
     ]
 
@@ -362,3 +373,147 @@ withTempDir prefix action = do
     (pure tempFile)
     removeDirectoryRecursive
     action
+
+--------------------------------------------------------------------------------
+-- CPP include resolution
+--------------------------------------------------------------------------------
+
+-- | Regression: @conduit@, @hashmap@, @thyme@ and @ghc-internal@ keep their
+-- CPP headers outside the source tree and point at them with @include-dirs@.
+-- Dropping that field left every macro call unexpanded, so the parser saw
+-- lines such as @STREAMING(yieldMany, ...)@ and rejected the file.
+test_collectsIncludeDirs :: Assertion
+test_collectsIncludeDirs =
+  withTempDir "aihc-hackage-include-dirs" $ \root -> do
+    let cabalFile = root </> "macros-demo.cabal"
+        srcDir = root </> "src"
+    createDirectoryIfMissing True srcDir
+    createDirectoryIfMissing True (root </> "include")
+    writeFile cabalFile macrosDemoCabal
+    writeFile (srcDir </> "Macros.hs") "module Macros where\n"
+    writeFile (root </> "include" </> "macros.h") "#define LENS(a) a\n"
+
+    cabalBytes <- BS.readFile cabalFile
+    gpd <-
+      case snd (runParseResult (parseGenericPackageDescription cabalBytes)) of
+        Right parsed -> pure parsed
+        Left (_, errs) -> assertFailure ("failed to parse test cabal file: " <> show errs)
+
+    files <- HC.collectComponentFiles gpd root
+    case files of
+      [info] ->
+        assertEqual
+          "include dirs"
+          [root </> "include"]
+          (HC.fileInfoIncludeDirs info)
+      _ -> assertFailure ("expected exactly one source file, got " <> show (map HC.fileInfoPath files))
+
+test_resolvesIncludeFromIncludeDirs :: Assertion
+test_resolvesIncludeFromIncludeDirs =
+  withTempDir "aihc-hackage-resolve-include" $ \root -> do
+    let srcDir = root </> "src" </> "Deep"
+        sourceFile = srcDir </> "Module.hs"
+        header = BSC.pack "#define LENS(a) a\n"
+    createDirectoryIfMissing True srcDir
+    createDirectoryIfMissing True (root </> "headers")
+    writeFile sourceFile "module Deep.Module where\n"
+    BS.writeFile (root </> "headers" </> "macros.h") header
+
+    let req = includeRequestFor sourceFile "macros.h"
+    missing <- HCpp.resolveIncludeBestEffort root [] sourceFile req
+    found <- HCpp.resolveIncludeBestEffort root [root </> "headers"] sourceFile req
+
+    assertEqual "no header without include-dirs" Nothing missing
+    assertEqual "header found through include-dirs" (Just header) found
+
+-- | @conduit@\'s shape: the header sits at the package root, well above the
+-- module that includes it, and only the package-wide search path finds it.
+test_resolvesIncludeFromPackageRoot :: Assertion
+test_resolvesIncludeFromPackageRoot =
+  withTempDir "aihc-hackage-resolve-root-include" $ \root -> do
+    let srcDir = root </> "src" </> "Data" </> "Conduit"
+        sourceFile = srcDir </> "Combinators.hs"
+        header = BSC.pack "#define STREAMING(a,b,c,d)\n"
+    createDirectoryIfMissing True srcDir
+    writeFile sourceFile "module Data.Conduit.Combinators where\n"
+    BS.writeFile (root </> "fusion-macros.h") header
+
+    found <-
+      HCpp.resolveIncludeBestEffort
+        root
+        [root]
+        sourceFile
+        (includeRequestFor sourceFile "fusion-macros.h")
+    assertEqual "header found at the package root" (Just header) found
+
+includeRequestFor :: FilePath -> FilePath -> IncludeRequest
+includeRequestFor from path =
+  IncludeRequest
+    { includePath = path,
+      includeFrom = from,
+      includeKind = IncludeLocal,
+      includeLine = 1
+    }
+
+macrosDemoCabal :: String
+macrosDemoCabal =
+  unlines
+    [ "cabal-version: 2.0",
+      "name: macros-demo",
+      "version: 0.1.0.0",
+      "build-type: Simple",
+      "",
+      "library",
+      "  exposed-modules: Macros",
+      "  hs-source-dirs: src",
+      "  include-dirs: include",
+      "  build-depends: base",
+      "  default-language: Haskell2010"
+    ]
+
+--------------------------------------------------------------------------------
+-- Literate Haskell
+--------------------------------------------------------------------------------
+
+-- | Regression: 22 snapshot packages ship @.lhs@ sources (README.lhs entry
+-- points, @happy@\'s grammar, @unlit@ itself). Handing the literate text
+-- straight to the parser rejected every one of them.
+test_leavesNonLiterateSourceAlone :: Assertion
+test_leavesNonLiterateSourceAlone =
+  assertEqual
+    "plain source"
+    (T.pack "module A where\nf = 1\n")
+    (normalizeSourceForParser "A.hs" (T.pack "module A where\nf = 1\n"))
+
+test_stripsByteOrderMark :: Assertion
+test_stripsByteOrderMark =
+  assertEqual
+    "bom stripped"
+    (T.pack "module A where\n")
+    (normalizeSourceForParser "A.hs" (T.pack "\xfeffmodule A where\n"))
+
+test_unliteratesBirdTracks :: Assertion
+test_unliteratesBirdTracks =
+  assertEqual
+    "bird tracks"
+    (T.pack "  module A where\n\n  f = 1\n")
+    (normalizeSourceForParser "A.lhs" (T.pack "> module A where\nSome prose.\n> f = 1\n"))
+
+-- | The leading @>@ becomes a space rather than being dropped, so tab stops
+-- and alignment survive unliterating.
+test_unliteratePreservesColumns :: Assertion
+test_unliteratePreservesColumns =
+  assertEqual
+    "columns"
+    (T.pack "  f = do\n      one\n      two\n")
+    (normalizeSourceForParser "A.lhs" (T.pack "> f = do\n>     one\n>     two\n"))
+
+test_unliteratesLatexCodeBlocks :: Assertion
+test_unliteratesLatexCodeBlocks =
+  assertEqual
+    "latex blocks"
+    (T.pack "\n\nmodule A where\n\n\n")
+    ( normalizeSourceForParser
+        "A.lhs"
+        (T.pack "Some prose.\n\\begin{code}\nmodule A where\n\\end{code}\nMore prose.\n")
+    )

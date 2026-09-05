@@ -21,10 +21,11 @@ import Aihc.Hackage.Stackage qualified as HS
 import Aihc.Hackage.Types (PackageSpec (..), formatPackage)
 import Aihc.Hackage.Util qualified as HU
 import Aihc.Parser.Bench.CLI (CoverageOptions (..))
-import Aihc.Parser.Bench.Parsers (ParseResult (..), collectCppIncludes, parseWithAihcExts)
+import Aihc.Parser.Bench.Parsers (ParseResult (..), collectCppIncludes, parseWithAihcExts, parseWithGhcExts)
 import Control.Exception (SomeException, displayException, try)
 import Control.Monad (foldM, when)
 import Data.ByteString qualified as BS
+import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (isSuffixOf)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
@@ -47,7 +48,11 @@ data CoverageResult = CoverageResult
     coverageFailed :: ![(PackageSpec, FilePath, String)],
     -- | Packages that could not be checked at all: download failures,
     -- unparseable @.cabal@ files, or no declared sources.
-    coverageSkipped :: ![(PackageSpec, String)]
+    coverageSkipped :: ![(PackageSpec, String)],
+    -- | Declared files that @ghc-lib-parser@ rejects too. GHC is the
+    -- reference, so a file GHC cannot parse says nothing about
+    -- @aihc-parser@ and is left out of the verdict.
+    coverageIgnoredFiles :: !Int
   }
   deriving (Show)
 
@@ -70,7 +75,8 @@ measureCoverage opts = do
   snapshot <- HS.loadStackageSnapshot (Just manager) (coverageSnapshot opts) (coverageOffline opts)
   case snapshot of
     Left err -> pure (Left err)
-    Right packages -> do
+    Right allPackages -> do
+      let packages = selectPackages (coveragePackages opts) allPackages
       when (coverageVerbose opts) $
         hPutStrLn stderr $
           "Checking " ++ show (length packages) ++ " packages from " ++ coverageSnapshot opts
@@ -79,24 +85,34 @@ measureCoverage opts = do
               { coverageTotal = length packages,
                 coverageParsed = 0,
                 coverageFailed = [],
-                coverageSkipped = []
+                coverageSkipped = [],
+                coverageIgnoredFiles = 0
               }
-      result <- foldM (checkOne opts manager) start packages
+      ignoredRef <- newIORef (0 :: Int)
+      result <- foldM (checkOne opts manager ignoredRef) start packages
+      ignored <- readIORef ignoredRef
       pure $
         Right
           result
             { coverageFailed = reverse (coverageFailed result),
-              coverageSkipped = reverse (coverageSkipped result)
+              coverageSkipped = reverse (coverageSkipped result),
+              coverageIgnoredFiles = ignored
             }
 
-checkOne :: CoverageOptions -> Manager -> CoverageResult -> PackageSpec -> IO CoverageResult
-checkOne opts manager acc pkg = do
-  outcome <- checkPackage opts manager pkg
+-- | Restrict a snapshot to the packages named on the command line.
+-- An empty selection means "every package".
+selectPackages :: [String] -> [PackageSpec] -> [PackageSpec]
+selectPackages [] packages = packages
+selectPackages wanted packages = filter ((`elem` wanted) . pkgName) packages
+
+checkOne :: CoverageOptions -> Manager -> IORef Int -> CoverageResult -> PackageSpec -> IO CoverageResult
+checkOne opts manager ignoredRef acc pkg = do
+  outcome <- checkPackage opts manager ignoredRef pkg
   case outcome of
     Right Nothing -> pure $! acc {coverageParsed = coverageParsed acc + 1}
     Right (Just (path, err)) -> do
       when (coverageVerbose opts) $
-        hPutStrLn stderr ("  parse failure: " ++ formatPackage pkg ++ ": " ++ path)
+        hPutStrLn stderr ("  parse failure: " ++ formatPackage pkg ++ ": " ++ path ++ "\n" ++ err)
       pure $! acc {coverageFailed = (pkg, path, err) : coverageFailed acc}
     Left reason -> do
       when (coverageVerbose opts) $
@@ -106,8 +122,8 @@ checkOne opts manager acc pkg = do
 -- | Parse every source file a package declares. @Left@ means the package
 -- could not be checked, @Right Nothing@ that everything parsed, and
 -- @Right (Just failure)@ that a file was rejected.
-checkPackage :: CoverageOptions -> Manager -> PackageSpec -> IO (Either String (Maybe (FilePath, String)))
-checkPackage opts manager pkg = do
+checkPackage :: CoverageOptions -> Manager -> IORef Int -> PackageSpec -> IO (Either String (Maybe (FilePath, String)))
+checkPackage opts manager ignoredRef pkg = do
   let dlOpts =
         HD.defaultDownloadOptions
           { HD.downloadVerbose = False,
@@ -122,7 +138,7 @@ checkPackage opts manager pkg = do
       case collected of
         Left (err :: SomeException) -> pure (Left ("cabal file parse failed: " ++ displayException err))
         Right [] -> pure (Left "no declared Haskell sources")
-        Right files -> Right <$> firstFailure pkgDir pkg files
+        Right files -> Right <$> firstFailure (coverageVerbose opts) ignoredRef pkgDir pkg files
 
 -- | The source files a package's @.cabal@ file declares for its buildable
 -- library and executable components. Stray sources such as @Setup.hs@ are
@@ -147,18 +163,22 @@ findCabalFile pkgDir = do
       flags <- mapM doesDirectoryExist paths
       pure [p | (p, isDir) <- zip paths flags, not isDir]
 
-firstFailure :: FilePath -> PackageSpec -> [HC.FileInfo] -> IO (Maybe (FilePath, String))
-firstFailure pkgDir pkg = go
+firstFailure :: Bool -> IORef Int -> FilePath -> PackageSpec -> [HC.FileInfo] -> IO (Maybe (FilePath, String))
+firstFailure verbose ignoredRef pkgDir pkg = go
   where
     go [] = pure Nothing
     go (info : rest) = do
-      outcome <- checkFile pkgDir pkg info
+      outcome <- checkFile verbose ignoredRef pkgDir pkg info
       case outcome of
         Nothing -> go rest
         failure -> pure failure
 
-checkFile :: FilePath -> PackageSpec -> HC.FileInfo -> IO (Maybe (FilePath, String))
-checkFile pkgDir pkg info = do
+-- | Parse one declared file. A file that @aihc-parser@ rejects only counts
+-- against it when @ghc-lib-parser@ accepts the very same input: GHC is the
+-- reference, and a file GHC also rejects (generated stubs, sources needing
+-- headers we do not have) proves nothing either way.
+checkFile :: Bool -> IORef Int -> FilePath -> PackageSpec -> HC.FileInfo -> IO (Maybe (FilePath, String))
+checkFile verbose ignoredRef pkgDir pkg info = do
   let absFile = HC.fileInfoPath info
       -- Include maps are keyed the way the tarball corpus keys them, so
       -- that CPP include resolution behaves identically here.
@@ -167,12 +187,20 @@ checkFile pkgDir pkg info = do
       cppOpts = HC.fileInfoCppOptions info
       lang = HC.fileInfoLanguage info
       deps = HC.fileInfoDependencies info
+      includeDirs = HC.fileInfoIncludeDirs info
   source <- HU.readTextFileLenient absFile
-  includes <- collectCppIncludes absFile exts cppOpts lang deps source
+  includes <- collectCppIncludes pkgDir includeDirs absFile exts cppOpts lang deps source
   let includeMap = includeEntryMap pkgDir pkg includes
-  pure $ case parseWithAihcExts includeMap relPath exts cppOpts lang deps source of
-    ParseSuccess -> Nothing
-    ParseFailure err -> Just (relPath, err)
+  case parseWithAihcExts includeMap relPath exts cppOpts lang deps source of
+    ParseSuccess -> pure Nothing
+    ParseFailure err ->
+      case parseWithGhcExts includeMap relPath exts cppOpts lang deps source of
+        ParseSuccess -> pure (Just (relPath, err))
+        ParseFailure _ -> do
+          when verbose $
+            hPutStrLn stderr ("  ignored (GHC rejects it too): " ++ relPath)
+          atomicModifyIORef' ignoredRef (\n -> (n + 1, ()))
+          pure Nothing
 
 includeEntryMap :: FilePath -> PackageSpec -> [(FilePath, Text)] -> Map.Map FilePath Text
 includeEntryMap pkgDir pkg includes =
@@ -189,6 +217,7 @@ formatCoverageSummary snapshot result =
     "Checked packages:   " ++ show (coverageChecked result),
     "Parse failures:     " ++ show (length (coverageFailed result)),
     "Skipped packages:   " ++ show (length (coverageSkipped result)),
+    "Files GHC rejects:  " ++ show (coverageIgnoredFiles result),
     printf
       "AIHC: %d / %d (%.2f%%)"
       (coverageParsed result)
