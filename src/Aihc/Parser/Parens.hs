@@ -654,7 +654,10 @@ typedPatternBindLhsNeedsParens :: Pattern -> Bool
 typedPatternBindLhsNeedsParens (PAnn _ sub) = typedPatternBindLhsNeedsParens sub
 typedPatternBindLhsNeedsParens (PCon name typeArgs args) =
   not (null typeArgs) || not (null args) || isNothing (nameQualifier name)
-typedPatternBindLhsNeedsParens (PBuiltinCon {}) = True
+-- An unapplied built-in constructor already carries its own delimiters, so
+-- @let (,) :: ty = e@ parses without more parentheses.
+typedPatternBindLhsNeedsParens (PBuiltinCon _ typeArgs args) =
+  not (null typeArgs) || not (null args)
 typedPatternBindLhsNeedsParens _ = False
 
 addMatchParens :: UnqualifiedName -> Match -> Match
