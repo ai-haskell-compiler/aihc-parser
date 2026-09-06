@@ -1,0 +1,6 @@
+extensions: []
+input: |
+  (,)
+ast: |-
+  PTupleCon 2 []
+status: pass

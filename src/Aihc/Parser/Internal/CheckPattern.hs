@@ -80,6 +80,7 @@ checkPattern expr = case expr of
     xPat <- checkPattern x
     case peelPatternAnn fPat of
       PCon name typeArgs args -> Right (PCon name typeArgs (args ++ [xPat]))
+      PTupleCon fl arity typeArgs args -> Right (PTupleCon fl arity typeArgs (args ++ [xPat]))
       _ -> Left "invalid pattern: application of non-constructor"
   -- Record construction -> record pattern
   ERecordCon name fields wc -> do
@@ -124,6 +125,7 @@ checkPattern expr = case expr of
     funPat <- checkPattern fun
     case peelPatternAnn funPat of
       PCon name typeArgs args -> Right (PCon name (typeArgs ++ [ty]) args)
+      PTupleCon fl arity typeArgs args -> Right (PTupleCon fl arity (typeArgs ++ [ty]) args)
       _ -> Left "unexpected type application in pattern"
   ETHExpQuote {} -> Left "unexpected Template Haskell expression quote in pattern"
   ETHTypedQuote {} -> Left "unexpected Template Haskell typed quote in pattern"
@@ -150,22 +152,13 @@ checkTupleElement :: Maybe Expr -> Either Text Pattern
 checkTupleElement Nothing = Left "unexpected tuple section in pattern"
 checkTupleElement (Just e) = checkPattern e
 
+-- | A tuple section with no fields, such as @(,)@ or @(#,,#)@, is the
+-- prefix tuple constructor.
 tupleConstructorPattern :: TupleFlavor -> [Maybe Expr] -> Maybe Pattern
 tupleConstructorPattern fl elems
   | null elems = Nothing
-  | all isNothing elems = Just (PCon (tupleConstructorName fl (length elems)) [] [])
+  | all isNothing elems = Just (PTupleCon fl (length elems) [] [])
   | otherwise = Nothing
-
-tupleConstructorName :: TupleFlavor -> Int -> Name
-tupleConstructorName fl arity =
-  qualifyName Nothing (mkUnqualifiedName NameConSym symbol)
-  where
-    symbol = case fl of
-      Boxed -> tupleCommas
-      Unboxed -> "#" <> tupleCommas <> "#"
-    tupleCommas
-      | arity == 1 = ""
-      | otherwise = mconcat (replicate (arity - 1) ",")
 
 -- | Check that a negated expression is a literal (for PNegLit patterns).
 checkNegLitPattern :: Expr -> Either Text Pattern
