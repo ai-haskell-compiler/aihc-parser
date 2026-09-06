@@ -16,7 +16,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Maybe (fromMaybe, isNothing, listToMaybe)
 import Data.Text qualified as T
 import Data.Text.Read qualified as TR
-import GHC.Builtin.Types (nilDataCon, sumDataCon, tupleDataCon, tupleTyCon, unrestrictedFunTyConName)
+import GHC.Builtin.Types (consDataCon, nilDataCon, sumDataCon, tupleDataCon, tupleTyCon, unrestrictedFunTyConName)
 import GHC.Data.FastString (mkFastString)
 import GHC.Hs
 import GHC.Types.Basic
@@ -647,6 +647,7 @@ toGhcHsExpr expr =
     A.ELambdaCase alts -> HsLam noAnn LamCase (matchGroup (LamAlt LamCase) (map (caseAltMatchWith (LamAlt LamCase)) alts))
     A.ELambdaCases alts -> HsLam noAnn LamCases (matchGroup (LamAlt LamCases) (map (lambdaCasesAltMatchWith (LamAlt LamCases)) alts))
     A.EInfix lhs op rhs -> OpApp noExtField (toGhcLHsExpr lhs) (operatorExpr op) (toGhcLHsExpr rhs)
+    A.EViewPat viewExpr rhs -> OpApp noExtField (toGhcLHsExpr viewExpr) (operatorExpr viewArrowName) (toGhcLHsExpr rhs)
     A.ENegate inner -> NegApp noAnn (toGhcLHsExpr inner) noSyntaxExpr
     A.ESectionL lhs op -> SectionL noExtField (toGhcLHsExpr lhs) (operatorExpr op)
     A.ESectionR op rhs -> SectionR noExtField (operatorExpr op) (toGhcLHsExpr rhs)
@@ -769,6 +770,11 @@ nullary Just {} = False
 
 operatorExpr :: A.Name -> LHsExpr GhcPs
 operatorExpr = lA . HsVar noExtField . lA . toRdrName
+
+-- | GHC keeps the view-pattern arrow of a bare @expr -> expr@ as an operator
+-- application until it reclassifies the expression as a pattern.
+viewArrowName :: A.Name
+viewArrowName = A.qualifyName Nothing (A.mkUnqualifiedName A.NameVarSym "->")
 
 recordBinds :: [A.RecordField A.Expr] -> Bool -> HsRecordBinds GhcPs
 recordBinds fields wildcard =
@@ -913,7 +919,7 @@ toPat pat =
     A.PList pats -> ListPat noAnn (map toLPat pats)
     A.PCon con [] pats -> ConPat conPatAnn (lA (toRdrName con)) (PrefixCon (map toLPat pats))
     A.PCon con _ pats -> ConPat conPatAnn (lA (toRdrName con)) (PrefixCon (map toLPat pats))
-    A.PTupleCon flavor arity _ pats -> ConPat conPatAnn (lA (getRdrName (tupleDataCon (boxity flavor) arity))) (PrefixCon (map toLPat pats))
+    A.PBuiltinCon con _ pats -> ConPat conPatAnn (lA (builtinConRdrName con)) (PrefixCon (map toLPat pats))
     A.PInfix lhs op rhs -> ConPat conPatAnn (lA (toRdrName op)) (InfixCon (toLPat lhs) (toLPat rhs))
     A.PView expr inner -> ViewPat noAnn (toGhcLHsExpr expr) (toLPat inner)
     A.PAs name inner -> AsPat noAnn (lA (toRdrName (A.qualifyName Nothing name))) (toLPat inner)
@@ -977,7 +983,7 @@ toHsType ty =
       | Just elems <- promotedTupleNameElems name ->
           HsExplicitTupleTy (noAnn, noAnn, noAnn) IsPromoted elems
     A.TCon name promotion -> HsTyVar noAnn (promotionFlag promotion) (lA (toRdrName name))
-    A.TBuiltinCon builtin -> builtinType builtin
+    A.TBuiltinCon builtin promotion -> builtinType builtin promotion
     A.TImplicitParam name inner -> HsIParamTy noAnn (lA (HsIPName (mkFastString (T.unpack (T.dropWhile (== '?') name))))) (toLHsType inner)
     A.TTypeLit lit -> HsTyLit noExtField (typeLit lit)
     A.TStar {} -> HsStarTy noExtField False
@@ -1021,13 +1027,28 @@ splitTrailingKindSig ty =
       Just (A.TContext context inner, kind)
     _ -> Nothing
 
-builtinType :: A.TypeBuiltinCon -> HsType GhcPs
-builtinType builtin =
+builtinType :: A.BuiltinCon -> A.TypePromotion -> HsType GhcPs
+builtinType builtin promotion =
   case builtin of
-    A.TBuiltinTuple arity -> HsTyVar noAnn NotPromoted (lA (getRdrName (tupleTyCon Boxed arity)))
-    A.TBuiltinArrow -> HsTyVar noAnn NotPromoted (lA (getRdrName unrestrictedFunTyConName))
-    A.TBuiltinList -> HsTyVar noAnn NotPromoted (lA (getRdrName nilDataCon))
-    A.TBuiltinCons -> HsTyVar noAnn NotPromoted (lA (mkRdrUnqual (mkDataOcc ":")))
+    A.BuiltinTuple flavor arity
+      | promoted -> HsTyVar noAnn IsPromoted (lA (getRdrName (tupleDataCon (boxity flavor) arity)))
+      | otherwise -> HsTyVar noAnn NotPromoted (lA (getRdrName (tupleTyCon (boxity flavor) arity)))
+    A.BuiltinArrow -> HsTyVar noAnn (promotionFlag promotion) (lA (getRdrName unrestrictedFunTyConName))
+    A.BuiltinList
+      | promoted -> HsExplicitListTy (noAnn, noAnn, noAnn) IsPromoted []
+      | otherwise -> HsTyVar noAnn NotPromoted (lA (getRdrName nilDataCon))
+    A.BuiltinCons -> HsTyVar noAnn (promotionFlag promotion) (lA (mkRdrUnqual (mkDataOcc ":")))
+  where
+    promoted = promotion == A.Promoted
+
+-- | The reader name of a built-in constructor in the term namespace.
+builtinConRdrName :: A.BuiltinCon -> RdrName
+builtinConRdrName con =
+  case con of
+    A.BuiltinTuple flavor arity -> getRdrName (tupleDataCon (boxity flavor) arity)
+    A.BuiltinList -> getRdrName nilDataCon
+    A.BuiltinCons -> getRdrName consDataCon
+    A.BuiltinArrow -> getRdrName unrestrictedFunTyConName
 
 toLHsKindAppArg :: A.Type -> LHsType GhcPs
 toLHsKindAppArg ty =
@@ -1379,7 +1400,7 @@ quotedTypeName :: A.Type -> LIdP GhcPs
 quotedTypeName ty =
   case A.peelTypeAnn ty of
     A.TCon name _ -> lA (toRdrName name)
-    A.TBuiltinCon A.TBuiltinList -> lA (getRdrName nilDataCon)
+    A.TBuiltinCon A.BuiltinList _ -> lA (getRdrName nilDataCon)
     A.TTuple flavor _ elems -> lA (getRdrName (tupleTyCon (boxity flavor) (length elems)))
     _ -> lA (mkRdrUnqual (mkDataOcc "UnsupportedQuote"))
 

@@ -106,10 +106,10 @@ buildPatternApp lhs rhs =
       PAnn
         (mkAnnotation NoSourceSpan)
         (PCon name typeArgs (args <> [rhs]))
-    PTupleCon fl arity typeArgs args ->
+    PBuiltinCon con typeArgs args ->
       PAnn
         (mkAnnotation NoSourceSpan)
-        (PTupleCon fl arity typeArgs (args <> [rhs]))
+        (PBuiltinCon con typeArgs (args <> [rhs]))
     _ -> lhs
 
 -- | Parse an atomic pattern (@apat@ in the Haskell Report).
@@ -420,7 +420,7 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
     tupleConstructorPatternParser tupleFlavor closeTok = do
       commas <- MP.some (expectedTok TkSpecialComma)
       expectedTok closeTok
-      pure (PTupleCon tupleFlavor (length commas + 1) [] [])
+      pure (PBuiltinCon (BuiltinTuple tupleFlavor (length commas + 1)) [] [])
 
     -- Try to parse the paren content as a view pattern: expr -> pat.
     -- Uses exprParser which stops before '->', then checks for the arrow.
@@ -576,6 +576,6 @@ isPatternAppHead :: Pattern -> Bool
 isPatternAppHead pat =
   case peelPatternAnn pat of
     PCon {} -> True
-    PTupleCon {} -> True
+    PBuiltinCon {} -> True
     PVar name -> isConLikeNameType (unqualifiedNameType name)
     _ -> False

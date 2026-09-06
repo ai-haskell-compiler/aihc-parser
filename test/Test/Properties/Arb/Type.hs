@@ -41,7 +41,7 @@ genType = scale (`div` 2) $ do
         [ TVar <$> genTypeVarName,
           (`TCon` Unpromoted) <$> genConName,
           (`TCon` Promoted) <$> genConName,
-          TBuiltinCon <$> genTypeBuiltinCon,
+          genBuiltinConType,
           TTypeLit <$> genTypeLiteral,
           pure (TStar "*"),
           pure TWildcard,
@@ -56,7 +56,7 @@ genType = scale (`div` 2) $ do
         [ TVar <$> genTypeVarName,
           (`TCon` Unpromoted) <$> genConName,
           (`TCon` Promoted) <$> genConName,
-          TBuiltinCon <$> genTypeBuiltinCon,
+          genBuiltinConType,
           TTypeLit <$> genTypeLiteral,
           pure (TStar "*"),
           pure TWildcard,
@@ -288,15 +288,21 @@ genTypeLiteral =
         pure (TypeLitChar c (T.pack (show c)))
     ]
 
-genTypeBuiltinCon :: Gen TypeBuiltinCon
-genTypeBuiltinCon =
-  elements
-    [ TBuiltinTuple 2,
-      TBuiltinTuple 3,
-      TBuiltinArrow,
-      TBuiltinList,
-      TBuiltinCons
-    ]
+-- | Generate a built-in type constructor with a promotion flag.
+-- @'(->)@ has no valid syntax, so the arrow stays unpromoted.
+genBuiltinConType :: Gen Type
+genBuiltinConType = do
+  con <-
+    elements
+      [ BuiltinTuple Boxed 2,
+        BuiltinTuple Boxed 3,
+        BuiltinTuple Unboxed 2,
+        BuiltinArrow,
+        BuiltinList,
+        BuiltinCons
+      ]
+  promotion <- if con == BuiltinArrow then pure Unpromoted else elements [Unpromoted, Promoted]
+  pure (TBuiltinCon con promotion)
 
 genSymbolText :: Gen Text
 genSymbolText = do

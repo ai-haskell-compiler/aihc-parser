@@ -2,5 +2,5 @@ extensions: []
 input: |
   (,) a b
 ast: |-
-  PTupleCon 2 [PVar "a", PVar "b"]
+  PBuiltinCon BuiltinTuple 2 [PVar "a", PVar "b"]
 status: pass

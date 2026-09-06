@@ -469,8 +469,8 @@ typeParenOperatorParser = withSpanAnn (TAnn . mkAnnotation) $ do
   expectedTok TkSpecialRParen
   pure $
     case (nameQualifier op, nameType op, nameText op) of
-      (Nothing, NameVarSym, "->") -> TBuiltinCon TBuiltinArrow
-      (Nothing, NameConSym, ":") -> TBuiltinCon TBuiltinCons
+      (Nothing, NameVarSym, "->") -> TBuiltinCon BuiltinArrow Unpromoted
+      (Nothing, NameConSym, ":") -> TBuiltinCon BuiltinCons Unpromoted
       _ -> TCon op Unpromoted
 
 typeQuasiQuoteParser :: TokParser Type
@@ -512,7 +512,7 @@ typeListParser = withSpanAnn (TAnn . mkAnnotation) $ do
   expectedTok TkSpecialLBracket
   mClosed <- MP.optional (expectedTok TkSpecialRBracket)
   case mClosed of
-    Just () -> pure (TBuiltinCon TBuiltinList)
+    Just () -> pure (TBuiltinCon BuiltinList Unpromoted)
     Nothing -> do
       elems <- typeParser `MP.sepBy1` expectedTok TkSpecialComma
       expectedTok TkSpecialRBracket
@@ -532,11 +532,7 @@ typeParenOrTupleParser = withSpanAnn (TAnn . mkAnnotation) $ do
       moreCommas <- MP.many (expectedTok TkSpecialComma)
       expectedTok closeTok
       let arity = 2 + length moreCommas
-      case tupleFlavor of
-        Boxed -> pure (TBuiltinCon (TBuiltinTuple arity))
-        Unboxed -> do
-          let tupleConName = "(#" <> T.replicate (arity - 1) "," <> "#)"
-          pure (TCon (qualifyName Nothing (mkUnqualifiedName NameConId tupleConName)) Unpromoted)
+      pure (TBuiltinCon (BuiltinTuple tupleFlavor arity) Unpromoted)
 
     parenthesizedTypeOrTupleParser tupleFlavor closeTok = do
       first <- typeParser
@@ -575,20 +571,10 @@ markTypePromoted ty =
       | Just inner <- markTypePromoted sub ->
           Just (TAnn ann inner)
     TCon name _ -> Just (TCon name Promoted)
-    TBuiltinCon con -> Just (promoteBuiltinCon con)
+    -- @'(->)@ is not valid syntax: the arrow has no promoted form.
+    TBuiltinCon BuiltinArrow _ -> Nothing
+    TBuiltinCon con _ -> Just (TBuiltinCon con Promoted)
     TList _ elems -> Just (TList Promoted elems)
     TTuple tupleFlavor _ elems -> Just (TTuple tupleFlavor Promoted elems)
     TTypeApp fn arg -> TTypeApp <$> markTypePromoted fn <*> pure arg
     _ -> Nothing
-
-promoteBuiltinCon :: TypeBuiltinCon -> Type
-promoteBuiltinCon con =
-  TCon
-    ( qualifyName Nothing $
-        case con of
-          TBuiltinTuple arity -> mkUnqualifiedName NameConId ("(" <> T.replicate (max 0 (arity - 1)) "," <> ")")
-          TBuiltinArrow -> mkUnqualifiedName NameVarSym "->"
-          TBuiltinList -> mkUnqualifiedName NameConId "[]"
-          TBuiltinCons -> mkUnqualifiedName NameConSym ":"
-    )
-    Promoted

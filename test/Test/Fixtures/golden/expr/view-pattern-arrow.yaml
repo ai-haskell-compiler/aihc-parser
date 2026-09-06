@@ -1,0 +1,6 @@
+extensions: [ViewPatterns]
+input: |
+  (f -> x)
+ast: |-
+  EParen (EViewPat (EVar "f") (EVar "x"))
+status: pass

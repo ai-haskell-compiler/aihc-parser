@@ -2,5 +2,5 @@ extensions: []
 input: |
   ((,,) a (Just b) c)
 ast: |-
-  PParen (PTupleCon 3 [PVar "a", PParen (PCon "Just" [PVar "b"]), PVar "c"])
+  PParen (PBuiltinCon BuiltinTuple 3 [PVar "a", PParen (PCon "Just" [PVar "b"]), PVar "c"])
 status: pass

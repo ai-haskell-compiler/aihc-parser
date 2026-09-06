@@ -654,7 +654,7 @@ typedPatternBindLhsNeedsParens :: Pattern -> Bool
 typedPatternBindLhsNeedsParens (PAnn _ sub) = typedPatternBindLhsNeedsParens sub
 typedPatternBindLhsNeedsParens (PCon name typeArgs args) =
   not (null typeArgs) || not (null args) || isNothing (nameQualifier name)
-typedPatternBindLhsNeedsParens (PTupleCon {}) = True
+typedPatternBindLhsNeedsParens (PBuiltinCon {}) = True
 typedPatternBindLhsNeedsParens _ = False
 
 addMatchParens :: UnqualifiedName -> Match -> Match
@@ -813,8 +813,9 @@ bangTypeNeedsPrefixParens (TAnn _ sub) = bangTypeNeedsPrefixParens sub
 bangTypeNeedsPrefixParens (TParen _) = False
 bangTypeNeedsPrefixParens TStar {} = True
 bangTypeNeedsPrefixParens (TCon _ Promoted) = True
-bangTypeNeedsPrefixParens (TBuiltinCon TBuiltinCons) = True
-bangTypeNeedsPrefixParens (TBuiltinCon _) = False
+bangTypeNeedsPrefixParens (TBuiltinCon BuiltinCons Unpromoted) = True
+bangTypeNeedsPrefixParens (TBuiltinCon _ Promoted) = True
+bangTypeNeedsPrefixParens (TBuiltinCon _ _) = False
 bangTypeNeedsPrefixParens TImplicitParam {} = True
 bangTypeNeedsPrefixParens TSplice {} = True
 -- Compound types: the first rendered character comes from the head/lhs.
@@ -867,7 +868,7 @@ infixConOperandNeedsParens (TTuple Boxed _ _) = False
 infixConOperandNeedsParens (TTuple Unboxed _ _) = False
 infixConOperandNeedsParens (TUnboxedSum {}) = True
 infixConOperandNeedsParens (TList _ []) = True
-infixConOperandNeedsParens (TBuiltinCon TBuiltinList) = True
+infixConOperandNeedsParens (TBuiltinCon BuiltinList _) = True
 infixConOperandNeedsParens (TInfix {}) = True
 -- Application head determines what the parser sees first.
 infixConOperandNeedsParens (TApp f _) = infixConOperandNeedsParens f
@@ -1119,6 +1120,9 @@ addExprParensPrec prec expr =
             op
             (addExprParensIn (CtxInfixRhs (prec == 1)) rhs)
         )
+    EViewPat viewExpr rhs ->
+      -- The view-pattern arrow only parses directly inside parentheses.
+      wrapExpr (prec > 0) (EViewPat (addExprParens viewExpr) (addExprParens rhs))
     ENegate inner ->
       wrapExpr (prec > 2) (ENegate (addNegateParens inner))
     ESectionL lhs op ->
@@ -1704,8 +1708,8 @@ addPatternParens pat =
     PUnboxedSum altIdx arity inner -> PUnboxedSum altIdx arity (addPatternInUnboxedSum altIdx inner)
     PList elems -> PList (map addPatternInDelimited elems)
     PCon con typeArgs args -> PCon con (map (addTypeIn CtxTypeAtom) typeArgs) (map addPatternAtomParens args)
-    PTupleCon tupleFlavor arity typeArgs args ->
-      PTupleCon tupleFlavor arity (map (addTypeIn CtxTypeAtom) typeArgs) (map addPatternAtomParens args)
+    PBuiltinCon con typeArgs args ->
+      PBuiltinCon con (map (addTypeIn CtxTypeAtom) typeArgs) (map addPatternAtomParens args)
     PInfix lhs op rhs -> PInfix (addPatternInfixOperandParens lhs) op (addPatternInfixRhsOperandParens rhs)
     PView viewExpr inner ->
       wrapPat True (PView (addViewExprParens viewExpr) (addPatternViewInnerParens inner))
@@ -1919,7 +1923,7 @@ addPatternAtomParens pat =
     PSplice {} -> addPatternParens pat
     PRecord {} -> addPatternParens pat
     PCon _ [] [] -> addPatternParens pat
-    PTupleCon _ _ [] [] -> addPatternParens pat
+    PBuiltinCon _ [] [] -> addPatternParens pat
     PInfix {} -> wrapPat True (addPatternParens pat)
     _ -> wrapPat True (addPatternParens pat)
 
@@ -1934,7 +1938,7 @@ addPatternInfixOperandParens pat =
     PAnn ann sub -> PAnn ann (addPatternInfixOperandParens sub)
     PNegLit _ -> addPatternParens pat
     PCon {} -> addPatternParens pat
-    PTupleCon {} -> addPatternParens pat
+    PBuiltinCon {} -> addPatternParens pat
     PInfix {} -> addPatternParens pat
     _ -> addPatternAtomParens pat
 
@@ -1949,7 +1953,7 @@ addPatternInfixRhsOperandParens pat =
     -- directly as either operand of an infix pattern.
     PNegLit {} -> addPatternParens pat
     PCon {} -> addPatternParens pat
-    PTupleCon {} -> addPatternParens pat
+    PBuiltinCon {} -> addPatternParens pat
     PInfix {} -> wrapPat True (addPatternParens pat)
     _ -> addPatternAtomParens pat
 
@@ -1962,8 +1966,8 @@ addArrowBndrPatternParens p@(PNegLit {}) = wrapPat True (addPatternParens p)
 addArrowBndrPatternParens p@(PInfix {}) = wrapPat True (addPatternParens p)
 addArrowBndrPatternParens p@(PCon _ (_ : _) _) = wrapPat True (addPatternParens p)
 addArrowBndrPatternParens p@(PCon _ [] (_ : _)) = wrapPat True (addPatternParens p)
-addArrowBndrPatternParens p@(PTupleCon _ _ (_ : _) _) = wrapPat True (addPatternParens p)
-addArrowBndrPatternParens p@(PTupleCon _ _ [] (_ : _)) = wrapPat True (addPatternParens p)
+addArrowBndrPatternParens p@(PBuiltinCon _ (_ : _) _) = wrapPat True (addPatternParens p)
+addArrowBndrPatternParens p@(PBuiltinCon _ [] (_ : _)) = wrapPat True (addPatternParens p)
 addArrowBndrPatternParens pat = addPatternParens pat
 
 -- | Add parens for a pattern in function-head argument position.
@@ -1977,7 +1981,7 @@ addFunctionHeadPatternAtomParens pat =
     PTypeSyntax {} -> wrapPat True (addPatternParens pat)
     PCon _ typeArgs args
       | not (null typeArgs) || not (null args) -> wrapPat True (addPatternParens pat)
-    PTupleCon _ _ typeArgs args
+    PBuiltinCon _ typeArgs args
       | not (null typeArgs) || not (null args) -> wrapPat True (addPatternParens pat)
     PTypeSig inner@(PVar {}) ty ->
       wrapPat True (PTypeSig (addPatternInfixOperandParens inner) (addSignatureTypeParens ty))
@@ -2012,7 +2016,7 @@ addPatternAtomStrictParens pat =
     PNegLit {} -> wrapPat True (addPatternParens pat)
     PTypeSyntax {} -> wrapPat True (addPatternParens pat)
     PCon _ (_ : _) [] -> wrapPat True (addPatternParens pat)
-    PTupleCon _ _ (_ : _) [] -> wrapPat True (addPatternParens pat)
+    PBuiltinCon _ (_ : _) [] -> wrapPat True (addPatternParens pat)
     PAs {} -> addPatternParens pat
     PStrict {} -> wrapPat True (addPatternParens pat)
     PIrrefutable {} -> wrapPat True (addPatternParens pat)

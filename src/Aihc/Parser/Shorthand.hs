@@ -639,7 +639,10 @@ docType ty =
       "TCon"
         <+> docName name
         <> (if promoted == Promoted then " Promoted" else "")
-    TBuiltinCon con -> "TBuiltinCon" <+> pretty (show con)
+    TBuiltinCon con promoted ->
+      "TBuiltinCon"
+        <+> hsep (docBuiltinCon con)
+        <> (if promoted == Promoted then " Promoted" else "")
     TImplicitParam name inner -> "TImplicitParam" <+> docText name <+> parens (docType inner)
     TTypeLit lit -> "TTypeLit" <+> docTypeLiteral lit
     TStar {} -> "TStar"
@@ -796,15 +799,14 @@ docPattern pat =
                       )
                   )
               )
-    PTupleCon tupleFlavor arity typeArgs args ->
+    PBuiltinCon con typeArgs args ->
       case typeArgs of
-        [] -> "PTupleCon" <+> hsep (docTupleFlavor tupleFlavor <> [pretty arity, brackets (hsep (punctuate comma (map docPattern args)))])
+        [] -> "PBuiltinCon" <+> hsep (docBuiltinCon con <> [brackets (hsep (punctuate comma (map docPattern args)))])
         _ ->
-          "PTupleCon"
+          "PBuiltinCon"
             <+> hsep
-              ( docTupleFlavor tupleFlavor
-                  <> [ pretty arity,
-                       braces
+              ( docBuiltinCon con
+                  <> [ braces
                          ( hsep
                              ( punctuate
                                  comma
@@ -831,6 +833,15 @@ docPatternTupleFields tupleFlavor elems =
   docTupleFlavor tupleFlavor <> [brackets (hsep (punctuate comma (map docPattern elems)))]
 
 -- | The shorthand omits the default 'Boxed' flavor.
+-- | Render a built-in constructor as its shorthand tag.
+docBuiltinCon :: BuiltinCon -> [Doc ann]
+docBuiltinCon con =
+  case con of
+    BuiltinTuple tupleFlavor arity -> ["BuiltinTuple"] <> docTupleFlavor tupleFlavor <> [pretty arity]
+    BuiltinArrow -> ["BuiltinArrow"]
+    BuiltinList -> ["BuiltinList"]
+    BuiltinCons -> ["BuiltinCons"]
+
 docTupleFlavor :: TupleFlavor -> [Doc ann]
 docTupleFlavor tupleFlavor =
   case tupleFlavor of
@@ -879,6 +890,7 @@ docExpr expr =
     ELambdaCase alts -> "ELambdaCase" <+> brackets (hsep (punctuate comma (map docCaseAlt alts)))
     ELambdaCases alts -> "ELambdaCases" <+> brackets (hsep (punctuate comma (map docLambdaCaseAlt alts)))
     EInfix lhs op rhs -> "EInfix" <+> parens (docExpr lhs) <+> docName op <+> parens (docExpr rhs)
+    EViewPat viewExpr rhs -> "EViewPat" <+> parens (docExpr viewExpr) <+> parens (docExpr rhs)
     ENegate inner -> "ENegate" <+> parens (docExpr inner)
     ESectionL lhs op -> "ESectionL" <+> parens (docExpr lhs) <+> docName op
     ESectionR op rhs -> "ESectionR" <+> docName op <+> parens (docExpr rhs)
