@@ -796,6 +796,25 @@ docPattern pat =
                       )
                   )
               )
+    PTupleCon tupleFlavor arity typeArgs args ->
+      case typeArgs of
+        [] -> "PTupleCon" <+> hsep (docTupleFlavor tupleFlavor <> [pretty arity, brackets (hsep (punctuate comma (map docPattern args)))])
+        _ ->
+          "PTupleCon"
+            <+> hsep
+              ( docTupleFlavor tupleFlavor
+                  <> [ pretty arity,
+                       braces
+                         ( hsep
+                             ( punctuate
+                                 comma
+                                 ( listField docType typeArgs
+                                     <> listField docPattern args
+                                 )
+                             )
+                         )
+                     ]
+              )
     PInfix lhs op rhs -> "PInfix" <+> parens (docPattern lhs) <+> docName op <+> parens (docPattern rhs)
     PView expr inner -> "PView" <+> parens (docExpr expr) <+> parens (docPattern inner)
     PAs name inner -> "PAs" <+> docUnqualifiedName name <+> parens (docPattern inner)
@@ -809,12 +828,14 @@ docPattern pat =
 
 docPatternTupleFields :: TupleFlavor -> [Pattern] -> [Doc ann]
 docPatternTupleFields tupleFlavor elems =
-  flavorFields <> [brackets (hsep (punctuate comma (map docPattern elems)))]
-  where
-    flavorFields =
-      case tupleFlavor of
-        Boxed -> []
-        _ -> [pretty (show tupleFlavor)]
+  docTupleFlavor tupleFlavor <> [brackets (hsep (punctuate comma (map docPattern elems)))]
+
+-- | The shorthand omits the default 'Boxed' flavor.
+docTupleFlavor :: TupleFlavor -> [Doc ann]
+docTupleFlavor tupleFlavor =
+  case tupleFlavor of
+    Boxed -> []
+    _ -> [pretty (show tupleFlavor)]
 
 docLiteral :: Literal -> Doc ann
 docLiteral lit =

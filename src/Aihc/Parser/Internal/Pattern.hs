@@ -106,6 +106,10 @@ buildPatternApp lhs rhs =
       PAnn
         (mkAnnotation NoSourceSpan)
         (PCon name typeArgs (args <> [rhs]))
+    PTupleCon fl arity typeArgs args ->
+      PAnn
+        (mkAnnotation NoSourceSpan)
+        (PTupleCon fl arity typeArgs (args <> [rhs]))
     _ -> lhs
 
 -- | Parse an atomic pattern (@apat@ in the Haskell Report).
@@ -362,6 +366,7 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
   case fmap lexTokenKind mNextTok of
     Just nextKind
       | nextKind == closeTok -> unitPatternParser tupleFlavor closeTok
+      | nextKind == TkSpecialComma -> tupleConstructorPatternParser tupleFlavor closeTok
       | tupleFlavor == Unboxed && nextKind == TkReservedPipe -> parseUnboxedSumPatLeadingBars closeTok
     _ -> do
       -- For boxed parens, try parsing as a top-level view pattern first.
@@ -408,6 +413,14 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
     unitPatternParser tupleFlavor closeTok = do
       expectedTok closeTok
       pure (PTuple tupleFlavor [])
+
+    -- Parse the prefix tuple constructor @(,)@, @(,,)@, or @(#,#)@.
+    -- The opening delimiter is already consumed. The arity is the
+    -- number of commas plus one.
+    tupleConstructorPatternParser tupleFlavor closeTok = do
+      commas <- MP.some (expectedTok TkSpecialComma)
+      expectedTok closeTok
+      pure (PTupleCon tupleFlavor (length commas + 1) [] [])
 
     -- Try to parse the paren content as a view pattern: expr -> pat.
     -- Uses exprParser which stops before '->', then checks for the arrow.
@@ -563,5 +576,6 @@ isPatternAppHead :: Pattern -> Bool
 isPatternAppHead pat =
   case peelPatternAnn pat of
     PCon {} -> True
+    PTupleCon {} -> True
     PVar name -> isConLikeNameType (unqualifiedNameType name)
     _ -> False

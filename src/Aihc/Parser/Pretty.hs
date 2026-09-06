@@ -550,6 +550,8 @@ prettyPattern pat =
        in hsep ["(#", prettyBarSeparated slots, "#)"]
     PList elems -> brackets (hsep (punctuate comma (map prettyPattern elems)))
     PCon con typeArgs args -> hsep ([prettyPrefixName con] <> map prettyInvisibleTypeArg typeArgs <> map prettyPattern args)
+    PTupleCon tupleFlavor arity typeArgs args ->
+      hsep ([prettyTupleCon tupleFlavor arity] <> map prettyInvisibleTypeArg typeArgs <> map prettyPattern args)
     PInfix lhs op rhs -> prettyPattern lhs <+> prettyNameInfixOp op <+> prettyPattern rhs
     PView viewExpr inner ->
       prettyExpr viewExpr <> nest 1 (hardline <> "->" <+> prettyPattern inner)
@@ -1276,6 +1278,15 @@ prettyTupleBody tupleFlavor inner =
   case tupleFlavor of
     Boxed -> parens inner
     Unboxed -> hsep ["(#", inner, "#)"]
+
+-- | Print the prefix tuple constructor for the given arity: @(,)@ or @(#,#)@.
+prettyTupleCon :: TupleFlavor -> Int -> Doc ann
+prettyTupleCon tupleFlavor arity =
+  case tupleFlavor of
+    Boxed -> parens commas
+    Unboxed -> "(#" <> commas <> "#)"
+  where
+    commas = mconcat (replicate (arity - 1) comma)
 
 prettyBinding :: RecordField Expr -> Doc ann
 prettyBinding field =

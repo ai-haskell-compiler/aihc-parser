@@ -1,0 +1,10 @@
+extensions: []
+input: |
+  module TupleConPrefixPatterns where
+  graph = array bounds0 [(,) v (mapMaybe key_vertex ks) | (,) v (_, _, ks) <- edges1]
+  swap x = case x of (,) a b -> (b, a)
+  f ((,) a b) = a
+  g (,) = 1
+ast: |-
+  Module {ModuleHead {"TupleConPrefixPatterns"}, [DeclValue (PatternBind (PVar "graph") (EApp (EApp (EVar "array") (EVar "bounds0")) (EListComp (EApp (EApp (ETuple [Nothing, Nothing]) (EVar "v")) (EParen (EApp (EApp (EVar "mapMaybe") (EVar "key_vertex")) (EVar "ks")))) [CompGen (PTupleCon 2 [PVar "v", PTuple [PWildcard, PWildcard, PVar "ks"]]) (EVar "edges1")]))), DeclValue (FunctionBind "swap" [Match {MatchHeadPrefix, [PVar "x"], ECase (EVar "x") [CaseAlt (PTupleCon 2 [PVar "a", PVar "b"]) (ETuple [EVar "b", EVar "a"])]}]), DeclValue (FunctionBind "f" [Match {MatchHeadPrefix, [PParen (PTupleCon 2 [PVar "a", PVar "b"])], EVar "a"}]), DeclValue (FunctionBind "g" [Match {MatchHeadPrefix, [PTupleCon 2 []], EInt 1 TInteger}])]}
+status: pass

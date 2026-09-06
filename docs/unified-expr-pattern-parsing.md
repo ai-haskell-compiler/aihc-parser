@@ -422,7 +422,7 @@ without it.
 | Negated literal | `ENegate` + literal child | `PNegLit` | Reject if child is not a literal |
 | Application | `EApp` | `PCon` | Accumulate args; head must be constructor |
 | Infix | `EInfix` | `PInfix` | Direct mapping |
-| Tuple | `ETuple` | `PTuple` | Reject `Nothing` elements (tuple sections) |
+| Tuple | `ETuple` | `PTuple` / `PTupleCon` | A section with no fields such as `(,)` is the prefix tuple constructor `PTupleCon`; reject other `Nothing` elements (tuple sections) |
 | Unboxed sum | `EUnboxedSum` | `PUnboxedSum` | Direct mapping |
 | List | `EList` | `PList` | Direct mapping |
 | Parenthesized | `EParen` | `PParen` | Direct mapping |

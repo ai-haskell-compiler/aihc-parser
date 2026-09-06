@@ -913,6 +913,7 @@ toPat pat =
     A.PList pats -> ListPat noAnn (map toLPat pats)
     A.PCon con [] pats -> ConPat conPatAnn (lA (toRdrName con)) (PrefixCon (map toLPat pats))
     A.PCon con _ pats -> ConPat conPatAnn (lA (toRdrName con)) (PrefixCon (map toLPat pats))
+    A.PTupleCon flavor arity _ pats -> ConPat conPatAnn (lA (getRdrName (tupleDataCon (boxity flavor) arity))) (PrefixCon (map toLPat pats))
     A.PInfix lhs op rhs -> ConPat conPatAnn (lA (toRdrName op)) (InfixCon (toLPat lhs) (toLPat rhs))
     A.PView expr inner -> ViewPat noAnn (toGhcLHsExpr expr) (toLPat inner)
     A.PAs name inner -> AsPat noAnn (lA (toRdrName (A.qualifyName Nothing name))) (toLPat inner)

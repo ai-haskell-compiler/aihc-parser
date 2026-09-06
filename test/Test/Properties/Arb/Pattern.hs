@@ -56,13 +56,15 @@ genPattern = scale (`div` 2) $ do
         PTuple Boxed <$> elements [[], [PVar (mkUnqualifiedName NameVarId "x"), PWildcard]],
         PTuple Unboxed <$> elements [[], [PVar (mkUnqualifiedName NameVarId "x")], [PVar (mkUnqualifiedName NameVarId "x"), PWildcard]],
         pure (PList []),
-        PCon <$> genConName <*> pure [] <*> pure []
+        PCon <$> genConName <*> pure [] <*> pure [],
+        genPatternTupleCon <*> pure []
       ]
     recursiveGenerators =
       [ PTuple Boxed <$> genTupleElemsWith,
         PTuple Unboxed <$> genUnboxedTupleElemsWith,
         PList <$> genListElemsWith,
         genPatternConWith,
+        genPatternTupleConWith,
         genPatternInfixWith,
         PParen <$> genPattern,
         genRecordPatternWith,
@@ -80,6 +82,17 @@ genViewPatternWith =
 
 genPatternConWith :: Gen Pattern
 genPatternConWith = PCon <$> genConName <*> pure [] <*> smallList0 genPattern
+
+-- | Generate a prefix tuple constructor such as @(,)@ or @(#,,#)@ that
+-- still needs its argument patterns.
+genPatternTupleCon :: Gen ([Pattern] -> Pattern)
+genPatternTupleCon = do
+  tupleFlavor <- elements [Boxed, Unboxed]
+  arity <- chooseInt (2, 4)
+  pure (PTupleCon tupleFlavor arity [])
+
+genPatternTupleConWith :: Gen Pattern
+genPatternTupleConWith = genPatternTupleCon <*> smallList0 genPattern
 
 genPatternTypeSigWith :: Gen Pattern
 genPatternTypeSigWith = PTypeSig <$> genPattern <*> genPatternType
@@ -191,6 +204,9 @@ shrinkPattern pat =
         [PCon con' typeArgs args | con' <- shrinkName con]
           <> [PCon con typeArgs [] | not (null args)]
           <> [PCon con typeArgs args' | args' <- shrinkList shrinkPattern args]
+      PTupleCon tupleFlavor arity typeArgs args ->
+        [PTupleCon tupleFlavor arity typeArgs [] | not (null args)]
+          <> [PTupleCon tupleFlavor arity typeArgs args' | args' <- shrinkList shrinkPattern args]
       PInfix lhs op rhs ->
         [lhs, rhs]
           <> [PInfix lhs' op rhs | lhs' <- shrinkPattern lhs]

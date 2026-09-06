@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Breaking:** Added the `PTupleCon` pattern constructor for the prefix
+  tuple constructor in patterns, such as `(,) a b` and `(#,#) a b`. It
+  records the tuple flavor, the arity, the invisible type arguments, and the
+  argument patterns. These patterns previously parsed as a `PCon` whose name
+  was only commas, such as `PCon "," [PVar "a", PVar "b"]`, which no scope
+  can resolve. The dedicated pattern parser now also accepts the prefix tuple
+  constructor outside parentheses, for example in a `case` alternative.
 - Made module parsing about 1.5x faster on the Stackage benchmark corpus and
   reduced allocation by a third. The context-item kind-signature lookahead now
   stops at declaration boundaries instead of scanning to the end of the

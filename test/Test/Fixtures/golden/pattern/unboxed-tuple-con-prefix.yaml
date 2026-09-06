@@ -1,0 +1,6 @@
+extensions: [UnboxedTuples]
+input: |
+  (#,#) a b
+ast: |-
+  PTupleCon Unboxed 2 [PVar "a", PVar "b"]
+status: pass

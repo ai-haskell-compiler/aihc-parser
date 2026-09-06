@@ -1247,6 +1247,10 @@ data Pattern
     PList [Pattern]
   | -- | @Just x@ or @Proxy \@Type@
     PCon Name [Type] [Pattern]
+  | -- | @(,) x y@ or @(#,#) x y@: the prefix tuple constructor applied to
+    -- invisible type arguments and patterns. The 'Int' is the arity of the
+    -- constructor, which is the number of commas plus one.
+    PTupleCon TupleFlavor Int [Type] [Pattern]
   | -- | @x :+: y@
     PInfix Pattern Name Pattern
   | -- | @(view -> pat)@

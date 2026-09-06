@@ -1,0 +1,5 @@
+extensions: []
+equivalent:
+  - (,) a b
+  - ( , ) (a) (b)
+status: pass
