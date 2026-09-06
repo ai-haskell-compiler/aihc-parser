@@ -2,5 +2,5 @@ extensions: [TypeApplications]
 input: |
   ((,) @Int a b)
 ast: |-
-  PParen (PTupleCon 2 {[TCon "Int"], [PVar "a", PVar "b"]})
+  PParen (PBuiltinCon BuiltinTuple 2 {[TCon "Int"], [PVar "a", PVar "b"]})
 status: pass

@@ -2,5 +2,5 @@ extensions: [UnboxedTuples]
 input: |
   ((#,,#) a b c)
 ast: |-
-  PParen (PTupleCon Unboxed 3 [PVar "a", PVar "b", PVar "c"])
+  PParen (PBuiltinCon BuiltinTuple Unboxed 3 [PVar "a", PVar "b", PVar "c"])
 status: pass

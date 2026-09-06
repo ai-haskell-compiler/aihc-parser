@@ -1,0 +1,5 @@
+extensions: [DataKinds]
+input: |
+  type A = '(->)
+status: fail
+reason: GHC rejects '(->); the arrow has no promoted form

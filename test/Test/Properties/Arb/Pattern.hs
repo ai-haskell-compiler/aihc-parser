@@ -89,7 +89,7 @@ genPatternTupleCon :: Gen ([Pattern] -> Pattern)
 genPatternTupleCon = do
   tupleFlavor <- elements [Boxed, Unboxed]
   arity <- chooseInt (2, 4)
-  pure (PTupleCon tupleFlavor arity [])
+  pure (PBuiltinCon (BuiltinTuple tupleFlavor arity) [])
 
 genPatternTupleConWith :: Gen Pattern
 genPatternTupleConWith = genPatternTupleCon <*> smallList0 genPattern
@@ -204,9 +204,9 @@ shrinkPattern pat =
         [PCon con' typeArgs args | con' <- shrinkName con]
           <> [PCon con typeArgs [] | not (null args)]
           <> [PCon con typeArgs args' | args' <- shrinkList shrinkPattern args]
-      PTupleCon tupleFlavor arity typeArgs args ->
-        [PTupleCon tupleFlavor arity typeArgs [] | not (null args)]
-          <> [PTupleCon tupleFlavor arity typeArgs args' | args' <- shrinkList shrinkPattern args]
+      PBuiltinCon con typeArgs args ->
+        [PBuiltinCon con typeArgs [] | not (null args)]
+          <> [PBuiltinCon con typeArgs args' | args' <- shrinkList shrinkPattern args]
       PInfix lhs op rhs ->
         [lhs, rhs]
           <> [PInfix lhs' op rhs | lhs' <- shrinkPattern lhs]

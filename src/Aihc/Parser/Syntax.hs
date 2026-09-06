@@ -15,6 +15,7 @@ module Aihc.Parser.Syntax
     ArrAppType (..),
     BangType (..),
     BinderName,
+    BuiltinCon (..),
     BinderHead (..),
     CallConv (..),
     CaseAlt (..),
@@ -92,7 +93,6 @@ module Aihc.Parser.Syntax
     FloatType (..),
     NumericType (..),
     TypeLiteral (..),
-    TypeBuiltinCon (..),
     TypePromotion (..),
     ForallVis (..),
     ForallTelescope (..),
@@ -1247,10 +1247,9 @@ data Pattern
     PList [Pattern]
   | -- | @Just x@ or @Proxy \@Type@
     PCon Name [Type] [Pattern]
-  | -- | @(,) x y@ or @(#,#) x y@: the prefix tuple constructor applied to
-    -- invisible type arguments and patterns. The 'Int' is the arity of the
-    -- constructor, which is the number of commas plus one.
-    PTupleCon TupleFlavor Int [Type] [Pattern]
+  | -- | @(,) x y@ or @(#,#) x y@: a built-in constructor applied to
+    -- invisible type arguments and patterns.
+    PBuiltinCon BuiltinCon [Type] [Pattern]
   | -- | @x :+: y@
     PInfix Pattern Name Pattern
   | -- | @(view -> pat)@
@@ -1323,8 +1322,8 @@ data Type
     TVar UnqualifiedName
   | -- | @Maybe@ or @'Just@
     TCon Name TypePromotion
-  | -- | @(,)@, @(->)@, @[]@, or @(:)@
-    TBuiltinCon TypeBuiltinCon
+  | -- | @(,)@, @(# , #)@, @(->)@, @[]@, @(:)@, or a promoted form such as @'[]@
+    TBuiltinCon BuiltinCon TypePromotion
   | -- | @(?x :: Int) => Int@
     TImplicitParam Text Type
   | -- | @1@, @"x"@, or @'c'@ at the type level.
@@ -1362,17 +1361,26 @@ data Type
     TWildcard
   deriving (Data, Eq, Show, Generic, NFData)
 
--- | Built-in type constructors that have dedicated surface syntax.
--- Examples: @(,)@, @(->)@, @[]@, and @(:)@.
-data TypeBuiltinCon
-  = -- | An @n@-tuple constructor like @(,)@ or @(,,)@.
-    TBuiltinTuple Int
+-- | A constructor that the grammar builds in.
+--
+-- These constructors have dedicated surface syntax and no name that a scope
+-- can bind, so they get their own representation instead of a 'Name'.
+-- Examples: @(,)@, @(# , #)@, @(->)@, @[]@, and @(:)@.
+--
+-- The same type serves the type namespace ('TBuiltinCon') and the pattern
+-- namespace ('PBuiltinCon').  Patterns use 'BuiltinTuple' only; the other
+-- constructors have ordinary pattern syntax (@[]@, @(:)@) or no term-level
+-- form at all (@(->)@).
+data BuiltinCon
+  = -- | An @n@-tuple constructor such as @(,)@, @(,,)@, or @(# , #)@.
+    -- The 'Int' is the arity, which is the number of commas plus one.
+    BuiltinTuple TupleFlavor Int
   | -- | @(->)@
-    TBuiltinArrow
+    BuiltinArrow
   | -- | @[]@
-    TBuiltinList
+    BuiltinList
   | -- | @(:)@
-    TBuiltinCons
+    BuiltinCons
   deriving (Data, Eq, Show, Generic, NFData)
 
 typeAnnSpan :: SourceSpan -> Type -> Type
@@ -2024,6 +2032,10 @@ data Expr
     ELambdaCases [LambdaCaseAlt]
   | -- | @a + b@
     EInfix Expr Name Expr
+  | -- | @f -> pat@ inside parentheses: the view-pattern arrow.
+    -- The arrow is grammar, not an operator that a scope can bind, so it
+    -- gets its own constructor.  'checkPattern' turns this into 'PView'.
+    EViewPat Expr Expr
   | -- | @-x@
     ENegate Expr
   | -- | @(x +)@

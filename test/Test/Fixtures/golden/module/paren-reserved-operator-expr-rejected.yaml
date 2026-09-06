@@ -1,0 +1,5 @@
+extensions: []
+input: |
+  a = (->)
+status: fail
+reason: GHC rejects a reserved operator as a parenthesized expression

@@ -1,0 +1,9 @@
+extensions: [DataKinds]
+input: |
+  type A = '[]
+  type B = '(:)
+  type C = '(,) Int Int
+  type D = '(,,)
+ast: |-
+  Module {[DeclTypeSyn (TypeSynDecl {Prefix "A", TBuiltinCon BuiltinList Promoted}), DeclTypeSyn (TypeSynDecl {Prefix "B", TBuiltinCon BuiltinCons Promoted}), DeclTypeSyn (TypeSynDecl {Prefix "C", TApp (TApp (TBuiltinCon BuiltinTuple 2 Promoted) (TCon "Int")) (TCon "Int")}), DeclTypeSyn (TypeSynDecl {Prefix "D", TBuiltinCon BuiltinTuple 3 Promoted})]}
+status: pass

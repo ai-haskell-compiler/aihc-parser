@@ -181,7 +181,7 @@ genTypeNameQuoteType :: Gen Type
 genTypeNameQuoteType =
   oneof
     [ TCon <$> genConName <*> pure Unpromoted,
-      pure (TBuiltinCon TBuiltinList),
+      pure (TBuiltinCon BuiltinList Unpromoted),
       pure (TTuple Boxed Unpromoted []),
       pure (TTuple Unboxed Unpromoted [])
     ]
@@ -503,6 +503,9 @@ shrinkExpr expr =
           <> [EInfix simpleVarExpr op rhs | lhs /= EList [] && not (isSimpleVarExpr lhs)]
           <> [EInfix lhs op rhs' | rhs' <- shrinkExpr rhs]
           <> [EInfix lhs' op rhs | lhs' <- shrinkExpr lhs]
+      EViewPat viewExpr rhs ->
+        [EViewPat viewExpr' rhs | viewExpr' <- shrinkExpr viewExpr]
+          <> [EViewPat viewExpr rhs' | rhs' <- shrinkExpr rhs]
       ENegate inner -> inner : [ENegate inner' | inner' <- shrinkExpr inner]
       ESectionL inner op ->
         inner

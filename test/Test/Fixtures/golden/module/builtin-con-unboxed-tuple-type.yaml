@@ -1,0 +1,7 @@
+extensions: [UnboxedTuples]
+input: |
+  type A = (# , #) Int Bool
+  type B = (# , , #)
+ast: |-
+  Module {[DeclTypeSyn (TypeSynDecl {Prefix "A", TApp (TApp (TBuiltinCon BuiltinTuple Unboxed 2) (TCon "Int")) (TCon "Bool")}), DeclTypeSyn (TypeSynDecl {Prefix "B", TBuiltinCon BuiltinTuple Unboxed 3})]}
+status: pass

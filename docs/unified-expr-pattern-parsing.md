@@ -187,7 +187,7 @@ Some pattern constructs have no expression counterpart:
 | `PIrrefutable` | `~pat` | Similarly, `~` is lexed as `TkPrefixTilde`. |
 | `PWildcard` | `_` | `_` is lexed as `TkKeywordUnderscore`. The expression parser can treat this as a special variable. |
 | `PNegLit` | `-5` | Already handled: `ENegate` with a literal child maps to `PNegLit`. |
-| `PView` | `(expr -> pat)` | View patterns appear inside parentheses. The existing `parseBoxedContent` / `parenExprParser` code path already handles this context. This can remain as a special case in the paren parser. |
+| `PView` | `(expr -> pat)` | View patterns appear inside parentheses. The `parseBoxedContent` / `parenExprParser` code path makes an `EViewPat`, which `checkPattern` turns into a `PView`. |
 
 **Strategy:** For `!pat`, `~pat`, `_`, and `x@pat`, introduce lightweight
 expression-level wrappers that carry the information through to
@@ -422,7 +422,8 @@ without it.
 | Negated literal | `ENegate` + literal child | `PNegLit` | Reject if child is not a literal |
 | Application | `EApp` | `PCon` | Accumulate args; head must be constructor |
 | Infix | `EInfix` | `PInfix` | Direct mapping |
-| Tuple | `ETuple` | `PTuple` / `PTupleCon` | A section with no fields such as `(,)` is the prefix tuple constructor `PTupleCon`; reject other `Nothing` elements (tuple sections) |
+| Tuple | `ETuple` | `PTuple` / `PBuiltinCon` | A section with no fields such as `(,)` is the prefix tuple constructor `PBuiltinCon (BuiltinTuple fl n)`; reject other `Nothing` elements (tuple sections) |
+| View pattern | `EViewPat` | `PView` | The paren parser makes `EViewPat` for `expr -> expr`; the arrow is grammar, not an operator name |
 | Unboxed sum | `EUnboxedSum` | `PUnboxedSum` | Direct mapping |
 | List | `EList` | `PList` | Direct mapping |
 | Parenthesized | `EParen` | `PParen` | Direct mapping |

@@ -8,13 +8,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Breaking:** Added the `PTupleCon` pattern constructor for the prefix
-  tuple constructor in patterns, such as `(,) a b` and `(#,#) a b`. It
-  records the tuple flavor, the arity, the invisible type arguments, and the
-  argument patterns. These patterns previously parsed as a `PCon` whose name
-  was only commas, such as `PCon "," [PVar "a", PVar "b"]`, which no scope
-  can resolve. The dedicated pattern parser now also accepts the prefix tuple
-  constructor outside parentheses, for example in a `case` alternative.
+- **Breaking:** Added the `BuiltinCon` type for the constructors that the
+  grammar builds in: `(,)`, `(# , #)`, `(->)`, `[]`, and `(:)`. These
+  constructors have no name that a scope can bind, so the AST no longer
+  spells them as a `Name`. The type namespace uses `TBuiltinCon BuiltinCon
+  TypePromotion` and the pattern namespace uses `PBuiltinCon BuiltinCon
+  [Type] [Pattern]`. This replaces `TypeBuiltinCon`, `TBuiltinCon
+  TypeBuiltinCon`, and `PTupleCon`.
+  - A prefix tuple constructor in a pattern, such as `(,) a b`, parsed as a
+    `PCon` whose name was only commas, such as `PCon ","
+    [PVar "a", PVar "b"]`. The dedicated pattern parser now also accepts the
+    prefix tuple constructor outside parentheses, for example in a `case`
+    alternative.
+  - An unboxed prefix tuple constructor in a type, such as `(# , #) Int
+    Bool`, parsed as `TCon "(#,#)"`. The boxed form already had a dedicated
+    constructor.
+  - A promoted built-in constructor, such as `'[]`, `'(:)`, or `'(,)`,
+    parsed as a `TCon` whose name was the surface syntax, such as `TCon "[]"
+    Promoted`. `TBuiltinCon` now carries the promotion flag.
+- **Breaking:** Added the `EViewPat` expression constructor for the
+  view-pattern arrow. The parser made an `EInfix` with an operator named
+  `->`, and `checkPattern` found the view pattern by a comparison against
+  that name. No scope binds a term named `->`.
+- The parser now rejects `'(->)`, which GHC also rejects. The arrow has no
+  promoted form.
+- The parser now rejects a reserved operator in a parenthesized expression:
+  `(->)`, `(=>)`, `(::)`, `(=)`, `(|)`, `(<-)`, `(..)`, and `(@)`. These
+  parsed as an `EVar` with the reserved operator as its name. GHC rejects
+  each of them. `(-)` and `(:)` are unchanged.
 - Made module parsing about 1.5x faster on the Stackage benchmark corpus and
   reduced allocation by a third. The context-item kind-signature lookahead now
   stops at declaration boundaries instead of scanning to the end of the

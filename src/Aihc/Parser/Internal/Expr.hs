@@ -103,10 +103,6 @@ data AtomContext
   | CmdArrAppLhsAtom
   deriving (Eq)
 
--- | The operator name used to represent @->@ in view-pattern expressions.
-viewPatArrowName :: Name
-viewPatArrowName = qualifyName Nothing (mkUnqualifiedName NameVarSym "->")
-
 -- | Optionally consume a @->@ token and parse the right-hand side as a
 -- view-pattern expression.  Returns the original expression unchanged when
 -- no @->@ follows.
@@ -114,7 +110,7 @@ maybeViewPattern :: Expr -> TokParser Expr
 maybeViewPattern lhs = do
   mArrow <- MP.optional (expectedTok TkReservedRightArrow)
   case mArrow of
-    Just () -> EInfix lhs viewPatArrowName <$> texprParser
+    Just () -> EViewPat lhs <$> texprParser
     Nothing -> pure lhs
 
 -- | Like 'exprParser' but also allows the view-pattern arrow @->@ at the
@@ -647,6 +643,12 @@ parenOperatorExprParser =
   withSpanAnn (EAnn . mkAnnotation) $
     EVar <$> parens operatorExprNameParser
 
+-- | Parse the operator inside a parenthesized operator expression such as
+-- @(+)@, @(:)@, or @(-)@.
+--
+-- Reserved operators such as @->@, @=>@, @::@, @|@, @<-@, @=@, @..@, and @\@@
+-- are grammar, not names.  They have no term-level meaning, so this parser
+-- rejects them, in the same way as GHC.
 operatorExprNameParser :: TokParser Name
 operatorExprNameParser =
   tokenSatisfy "operator" $ \tok ->
@@ -655,16 +657,8 @@ operatorExprNameParser =
       TkConSym sym -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConSym sym))
       TkQVarSym modName sym -> Just (mkNameAt tok (Just modName) NameVarSym sym)
       TkQConSym modName sym -> Just (mkNameAt tok (Just modName) NameConSym sym)
-      TkReservedAt -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "@"))
       TkMinusOperator -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "-"))
       TkReservedColon -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConSym ":"))
-      TkReservedDoubleColon -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "::"))
-      TkReservedEquals -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "="))
-      TkReservedPipe -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "|"))
-      TkReservedLeftArrow -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "<-"))
-      TkReservedRightArrow -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "->"))
-      TkReservedDoubleArrow -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "=>"))
-      TkReservedDotDot -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym ".."))
       _ -> Nothing
 
 rhsParser :: TokParser (Rhs Expr)

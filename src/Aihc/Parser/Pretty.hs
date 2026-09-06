@@ -454,7 +454,9 @@ prettyType ty =
             | T.any (== '\'') rendered = "' "
             | otherwise = "'"
        in if promoted == Promoted then promoteTick <> base else base
-    TBuiltinCon con -> prettyTypeBuiltinCon con
+    TBuiltinCon con promoted ->
+      let base = prettyBuiltinCon con
+       in if promoted == Promoted then "'" <> base else base
     TImplicitParam name inner -> pretty name <+> "::" <+> prettyType inner
     TTypeLit lit -> prettyTypeLiteral lit
     TStar spelling -> pretty spelling
@@ -505,13 +507,19 @@ prettyArrowKind ArrowUnrestricted = "->"
 prettyArrowKind ArrowLinear = "%1" <+> "->"
 prettyArrowKind (ArrowExplicit ty) = "%" <> prettyType ty <+> "->"
 
-prettyTypeBuiltinCon :: TypeBuiltinCon -> Doc ann
-prettyTypeBuiltinCon con =
+-- | Print a built-in constructor such as @(,)@, @(# , #)@, @(->)@, @[]@,
+-- or @(:)@.
+prettyBuiltinCon :: BuiltinCon -> Doc ann
+prettyBuiltinCon con =
   case con of
-    TBuiltinTuple arity -> parens (pretty (T.replicate (max 0 (arity - 1)) ","))
-    TBuiltinArrow -> "(->)"
-    TBuiltinList -> "[]"
-    TBuiltinCons -> "(:)"
+    BuiltinTuple tupleFlavor arity ->
+      let commas = mconcat (replicate (max 0 (arity - 1)) comma)
+       in case tupleFlavor of
+            Boxed -> parens commas
+            Unboxed -> "(#" <> commas <> "#)"
+    BuiltinArrow -> "(->)"
+    BuiltinList -> "[]"
+    BuiltinCons -> "(:)"
 
 prettyContext :: [Type] -> Doc ann
 prettyContext constraints =
@@ -550,8 +558,8 @@ prettyPattern pat =
        in hsep ["(#", prettyBarSeparated slots, "#)"]
     PList elems -> brackets (hsep (punctuate comma (map prettyPattern elems)))
     PCon con typeArgs args -> hsep ([prettyPrefixName con] <> map prettyInvisibleTypeArg typeArgs <> map prettyPattern args)
-    PTupleCon tupleFlavor arity typeArgs args ->
-      hsep ([prettyTupleCon tupleFlavor arity] <> map prettyInvisibleTypeArg typeArgs <> map prettyPattern args)
+    PBuiltinCon con typeArgs args ->
+      hsep ([prettyBuiltinCon con] <> map prettyInvisibleTypeArg typeArgs <> map prettyPattern args)
     PInfix lhs op rhs -> prettyPattern lhs <+> prettyNameInfixOp op <+> prettyPattern rhs
     PView viewExpr inner ->
       prettyExpr viewExpr <> nest 1 (hardline <> "->" <+> prettyPattern inner)
@@ -1186,6 +1194,8 @@ prettyExpr expr =
       "\\" <> "cases" <> prettyCaseLayout (map prettyLambdaCaseAlt alts)
     EInfix lhs op rhs ->
       nest 2 (prettyExpr lhs) <> nest 1 (hardline <> prettyNameInfixOp op <+> prettyExpr rhs)
+    EViewPat viewExpr rhs ->
+      prettyExpr viewExpr <> nest 1 (hardline <> "->" <+> prettyExpr rhs)
     ENegate inner -> "-" <+> prettyExprAtStatementStart inner
     ESectionL lhs op ->
       nest 2 (prettyExpr lhs) <> nest 1 (hardline <> " " <> prettyNameInfixOp op)
@@ -1280,14 +1290,6 @@ prettyTupleBody tupleFlavor inner =
     Unboxed -> hsep ["(#", inner, "#)"]
 
 -- | Print the prefix tuple constructor for the given arity: @(,)@ or @(#,#)@.
-prettyTupleCon :: TupleFlavor -> Int -> Doc ann
-prettyTupleCon tupleFlavor arity =
-  case tupleFlavor of
-    Boxed -> parens commas
-    Unboxed -> "(#" <> commas <> "#)"
-  where
-    commas = mconcat (replicate (arity - 1) comma)
-
 prettyBinding :: RecordField Expr -> Doc ann
 prettyBinding field =
   if recordFieldPun field
