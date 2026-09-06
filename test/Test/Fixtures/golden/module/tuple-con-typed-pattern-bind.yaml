@@ -1,0 +1,7 @@
+extensions: [MultiWayIf, PartialTypeSignatures, UnboxedTuples]
+input: |
+  x = if | let (,) :: _ = [] -> []
+  y = if | let (#,#) :: _ = [] -> []
+ast: |-
+  Module {[DeclValue (PatternBind (PVar "x") (EMultiWayIf [GuardedRhs {[GuardLet [DeclValue (PatternBind (PTypeSig (PBuiltinCon BuiltinTuple 2 []) (TWildcard)) (EList []))]], EList []}])), DeclValue (PatternBind (PVar "y") (EMultiWayIf [GuardedRhs {[GuardLet [DeclValue (PatternBind (PTypeSig (PBuiltinCon BuiltinTuple Unboxed 2 []) (TWildcard)) (EList []))]], EList []}]))]}
+status: pass
