@@ -89,8 +89,9 @@ commands download the snapshot packages, so the first run takes a long time.
 
 ## Performance
 
-[BENCHMARKS.md](BENCHMARKS.md) shows the parser speed and the memory use
-relative to `ghc-lib-parser`, measured on a Stackage snapshot.
+[BENCHMARKS.md](BENCHMARKS.md) shows the parser time and the memory use
+relative to `ghc-lib-parser`, measured on a Stackage snapshot. Every column is
+a fraction of the baseline's, so lower is better.
 
 Run `just benchmarks` (or `nix run .#generate-benchmarks`) to measure again and
 write a new `BENCHMARKS.md`. The tool downloads the snapshot packages, so the
