@@ -468,38 +468,38 @@ renderReport ReportOptions {reportSnapshot} Corpus {corpusPackageCount, corpusFi
         "",
         "## Parser Performance",
         "",
-        "Parser input is preprocessed with `aihc-cpp` before measurement. GHC is the baseline. Allocation and peak heap values are fractions of GHC's totals (lower is better); peak heap is the RTS maximum live heap.",
+        "Parser input is preprocessed with `aihc-cpp` before measurement. GHC is the baseline. Every value is a fraction of GHC's total, so lower is better throughout; peak heap is the RTS maximum live heap.",
         "",
-        "Neither parser sets an `-O` level, so both are built at the Cabal default of `-O1` and the speed column compares parsers rather than optimisation levels. For reference, `-O2` is worth about 10% to `ghc-lib-parser` and about 6% to `aihc-parser`.",
+        "Neither parser sets an `-O` level, so both are built at the Cabal default of `-O1` and the time column compares parsers rather than optimisation levels. For reference, `-O2` is worth about 10% to `ghc-lib-parser` and about 6% to `aihc-parser`.",
         "",
-        "| Parser | Relative Speed | Relative Allocations | Relative Peak Heap |",
+        "| Parser | Relative Time | Relative Allocations | Relative Peak Heap |",
         "| --- | ---: | ---: | ---: |"
       ]
         ++ map (renderParserRatioRow (parserBaseline "GHC (`ghc-lib-parser`)" parserResults)) parserResults
         ++ [ "",
              "## CPP Performance",
              "",
-             "`clang -E` is the baseline.",
+             "`clang -E` is the baseline; lower is better.",
              "",
-             "| Preprocessor | Relative Speed |",
+             "| Preprocessor | Relative Time |",
              "| --- | ---: |"
            ]
         ++ map (renderRatioRow (baseline "clang -E" cppResults)) cppResults
 
 renderRatioRow :: Integer -> ToolResult -> String
 renderRatioRow baselineNanos ToolResult {toolName, toolNanos} =
-  "| " ++ toolName ++ " | `" ++ formatRatio baselineNanos toolNanos ++ "` |"
+  "| " ++ toolName ++ " | `" ++ formatRelative baselineNanos toolNanos ++ "` |"
 
 renderParserRatioRow :: ParserResult -> ParserResult -> String
 renderParserRatioRow baselineResult result =
   "| "
     ++ parserName result
     ++ " | `"
-    ++ formatRatio (parserNanos baselineResult) (parserNanos result)
+    ++ formatRelative (parserNanos baselineResult) (parserNanos result)
     ++ "` | `"
-    ++ formatFraction (parserAllocatedBytes baselineResult) (parserAllocatedBytes result)
+    ++ formatRelative (parserAllocatedBytes baselineResult) (parserAllocatedBytes result)
     ++ "` | `"
-    ++ formatFraction (parserPeakHeapBytes baselineResult) (parserPeakHeapBytes result)
+    ++ formatRelative (parserPeakHeapBytes baselineResult) (parserPeakHeapBytes result)
     ++ "` |"
 
 parserBaseline :: String -> [ParserResult] -> ParserResult
@@ -514,15 +514,17 @@ baseline name results =
     n : _ -> n
     [] -> error ("missing benchmark baseline: " ++ name)
 
-formatRatio :: Integer -> Integer -> String
-formatRatio _ 0 = "0.00x"
-formatRatio baselineNanos candidateNanos =
-  printf "%.2fx" (fromIntegral baselineNanos / fromIntegral candidateNanos :: Double)
-
-formatFraction :: Integer -> Integer -> String
-formatFraction 0 _ = "0.00x"
-formatFraction baselineBytes candidateBytes =
-  printf "%.2fx" (fromIntegral candidateBytes / fromIntegral baselineBytes :: Double)
+-- | Render a measurement as a fraction of the baseline's, so that smaller is
+-- better for every column of the report.  Ratios far below one get extra
+-- decimals; two would round the preprocessor rows down to a single digit.
+formatRelative :: Integer -> Integer -> String
+formatRelative 0 _ = "0.00x"
+formatRelative baselineValue candidateValue
+  | ratio < 0.01 = printf "%.4fx" ratio
+  | ratio < 0.1 = printf "%.3fx" ratio
+  | otherwise = printf "%.2fx" ratio
+  where
+    ratio = fromIntegral candidateValue / fromIntegral baselineValue :: Double
 
 formatInt :: Int -> String
 formatInt n
