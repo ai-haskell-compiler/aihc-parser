@@ -14,6 +14,7 @@ module Aihc.Parser.Internal.Common
     nameToUnqualified,
     mkUnqualifiedNameAt,
     mkNameAt,
+    identifierName,
     identifierNameWithTokenParser,
     identifierNameParser,
     identifierUnqualifiedNameParser,
@@ -271,19 +272,29 @@ moduleNameParser =
         TkQConId modName name | isModuleName (modName <> "." <> name) -> Just (modName <> "." <> name)
         _ -> Nothing
 
+-- | The 'Name' an identifier token denotes, or 'Nothing' if the token is not
+-- an identifier.
+--
+-- Exposed as a plain function rather than only as a parser so that callers
+-- which also need the token itself (for its span) can build their result
+-- inside a single token match, instead of pairing the two up and taking the
+-- pair apart again in a monadic bind.
+identifierName :: LexToken -> Maybe Name
+identifierName tok =
+  case lexTokenKind tok of
+    TkVarId ident -> Just (mkNameAt tok Nothing NameVarId ident)
+    TkConId ident -> Just (mkNameAt tok Nothing NameConId ident)
+    TkQVarId modName ident -> Just (mkNameAt tok (Just modName) NameVarId ident)
+    TkQConId modName ident -> Just (mkNameAt tok (Just modName) NameConId ident)
+    _ -> Nothing
+
 identifierNameWithTokenParser :: TokParser (LexToken, Name)
 identifierNameWithTokenParser =
-  tokenSatisfy "identifier" $ \tok ->
-    case lexTokenKind tok of
-      TkVarId ident -> Just (tok, qualifyName Nothing (mkUnqualifiedNameAt tok NameVarId ident))
-      TkConId ident -> Just (tok, qualifyName Nothing (mkUnqualifiedNameAt tok NameConId ident))
-      TkQVarId modName ident -> Just (tok, mkNameAt tok (Just modName) NameVarId ident)
-      TkQConId modName ident -> Just (tok, mkNameAt tok (Just modName) NameConId ident)
-      _ -> Nothing
+  tokenSatisfy "identifier" $ \tok -> (,) tok <$> identifierName tok
 
 identifierNameParser :: TokParser Name
 identifierNameParser =
-  snd <$> identifierNameWithTokenParser
+  tokenSatisfy "identifier" identifierName
 
 identifierUnqualifiedNameParser :: TokParser UnqualifiedName
 identifierUnqualifiedNameParser =
@@ -320,7 +331,7 @@ constructorNameParser :: TokParser Name
 constructorNameParser =
   tokenSatisfy "constructor identifier" $ \tok ->
     case lexTokenKind tok of
-      TkConId ident -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConId ident))
+      TkConId ident -> Just (mkNameAt tok Nothing NameConId ident)
       TkQConId modName ident -> Just (mkNameAt tok (Just modName) NameConId ident)
       _ -> Nothing
 
@@ -356,11 +367,11 @@ operatorNameParser :: TokParser Name
 operatorNameParser =
   tokenSatisfy "operator" $ \tok ->
     case lexTokenKind tok of
-      TkVarSym op -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym op))
-      TkConSym op -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConSym op))
+      TkVarSym op -> Just (mkNameAt tok Nothing NameVarSym op)
+      TkConSym op -> Just (mkNameAt tok Nothing NameConSym op)
       TkQVarSym modName op -> Just (mkNameAt tok (Just modName) NameVarSym op)
       TkQConSym modName op -> Just (mkNameAt tok (Just modName) NameConSym op)
-      TkReservedAt -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "@"))
+      TkReservedAt -> Just (mkNameAt tok Nothing NameVarSym "@")
       _ -> Nothing
 
 operatorUnqualifiedNameParser :: TokParser UnqualifiedName
@@ -684,8 +695,8 @@ contextItemParserWith typeParser typeAtomParser =
     constraintOperatorIdentifierParser =
       tokenSatisfy "constraint operator identifier" $ \tok ->
         case lexTokenKind tok of
-          TkVarId name -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarId name))
-          TkConId name -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConId name))
+          TkVarId name -> Just (mkNameAt tok Nothing NameVarId name)
+          TkConId name -> Just (mkNameAt tok Nothing NameConId name)
           _ -> Nothing
     unpromotedInfixOperatorParser =
       tokenSatisfy "type infix operator" $ \tok ->
@@ -693,8 +704,8 @@ contextItemParserWith typeParser typeAtomParser =
           TkVarSym op
             | op /= "."
                 && op /= "!" ->
-                Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym op), Unpromoted)
-          TkConSym op -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConSym op), Unpromoted)
+                Just (mkNameAt tok Nothing NameVarSym op, Unpromoted)
+          TkConSym op -> Just (mkNameAt tok Nothing NameConSym op, Unpromoted)
           TkQVarSym modName op ->
             Just (mkNameAt tok (Just modName) NameVarSym op, Unpromoted)
           TkQConSym modName op -> Just (mkNameAt tok (Just modName) NameConSym op, Unpromoted)
@@ -895,10 +906,18 @@ asPatternParser bodyParser = withSpanAnn (PAnn . mkAnnotation) $ do
   name <- MP.try (binderNameParser <* expectedTok TkReservedAt)
   PAs name <$> bodyParser
 
+-- | Match a tuple opening delimiter and report the closer that must match it.
+--
+-- A single token match rather than two alternatives: this parser is tried at
+-- very many positions where the next token is neither @(@ nor @(#@, and one
+-- token test rejects those positions instead of two.
 tupleDelimsParser :: TokParser (TupleFlavor, LexTokenKind)
 tupleDelimsParser =
-  (expectedTok TkSpecialLParen $> (Boxed, TkSpecialRParen))
-    <|> (expectedTok TkSpecialUnboxedLParen $> (Unboxed, TkSpecialUnboxedRParen))
+  tokenSatisfy "symbol '(' or '(#'" $ \tok ->
+    case lexTokenKind tok of
+      TkSpecialLParen -> Just (Boxed, TkSpecialRParen)
+      TkSpecialUnboxedLParen -> Just (Unboxed, TkSpecialUnboxedRParen)
+      _ -> Nothing
 
 recordFieldsWithWildcardsParser :: TokParser [a] -> TokParser ([a], Bool)
 recordFieldsWithWildcardsParser fieldsParser = do
@@ -1143,15 +1162,15 @@ infixOperatorParser =
     symbolicOperatorParser =
       tokenSatisfy "infix operator" $ \tok ->
         case lexTokenKind tok of
-          TkVarSym op -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym op))
-          TkConSym op -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConSym op))
-          TkPrefixPercent -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "%"))
+          TkVarSym op -> Just (mkNameAt tok Nothing NameVarSym op)
+          TkConSym op -> Just (mkNameAt tok Nothing NameConSym op)
+          TkPrefixPercent -> Just (mkNameAt tok Nothing NameVarSym "%")
           TkQVarSym modName op -> Just (mkNameAt tok (Just modName) NameVarSym op)
           TkQConSym modName op -> Just (mkNameAt tok (Just modName) NameConSym op)
           -- TkMinusOperator is minus when LexicalNegation is enabled but used as infix
-          TkMinusOperator -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "-"))
+          TkMinusOperator -> Just (mkNameAt tok Nothing NameVarSym "-")
           -- Reserved operators that can be used as infix operators
-          TkReservedColon -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConSym ":"))
+          TkReservedColon -> Just (mkNameAt tok Nothing NameConSym ":")
           _ -> Nothing
 
     backtickIdentifierOperatorParser =

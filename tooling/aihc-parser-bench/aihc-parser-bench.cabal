@@ -27,7 +27,6 @@ library
     aihc-cpp >=1.0 && <1.1,
     aihc-hackage,
     aihc-parser,
-    async >=2.2 && <2.3,
     base >=4.16 && <5,
     bytestring >=0.10.8 && <0.13,
     containers >=0.5 && <0.9,
@@ -57,11 +56,14 @@ executable aihc-parser-bench
     aihc-parser-bench,
     base >=4.16 && <5,
 
+  -- Deliberately not -threaded.  The parser benchmark is a sequential
+  -- workload, and the parallel GC that -N turns on costs it roughly 30% of
+  -- its wall time and makes run-to-run variance larger than the differences
+  -- an optimisation is trying to measure.  -rtsopts stays so that --gc-stats
+  -- can be given its +RTS -T.
   ghc-options:
     -Wall
-    -threaded
     -rtsopts
-    -with-rtsopts=-N
 
   default-language: GHC2021
 

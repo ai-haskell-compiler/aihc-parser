@@ -376,27 +376,43 @@ mkSpan start end =
       sourceSpanEndOffset = lexerByteOffset end
     }
 
+-- | Consume a prefix of the input, updating the source position.
+--
+-- Every character advances the byte offset by its own UTF-8 width, so the new
+-- offset is just the old one plus the byte length of @consumed@; only the
+-- line/column/line-start fields need a scan.  That scan walks byte indices
+-- with 'TU.iter' so the UTF-8 width of each character comes from the iterator
+-- instead of being recomputed from the character.
 advanceChars :: Text -> LexerState -> LexerState
 advanceChars consumed st =
-  let go (!line, !col, !byteOff, !atLineStart) ch =
-        case ch of
-          '\n' -> (line + 1, 1, byteOff + 1, True)
-          '\t' ->
-            let nextTabStop = 8 - ((col - 1) `mod` 8)
-             in (line, col + nextTabStop, byteOff + 1, atLineStart)
-          ' ' -> (line, col + 1, byteOff + 1, atLineStart)
-          _
-            | isSpace ch -> (line, col + 1, byteOff + utf8CharWidth ch, atLineStart)
-            | otherwise -> (line, col + 1, byteOff + utf8CharWidth ch, False)
-      (!finalLine, !finalCol, !finalByteOff, !finalAtLineStart) =
-        T.foldl' go (lexerLine st, lexerCol st, lexerByteOffset st, lexerAtLineStart st) consumed
+  let !nbytes = TU.lengthWord8 consumed
+      go !i !line !col !atLineStart
+        | i >= nbytes = (line, col, atLineStart)
+        | otherwise =
+            let TU.Iter ch d = TU.iter consumed i
+             in case ch of
+                  '\n' -> go (i + d) (line + 1) 1 True
+                  '\t' ->
+                    let nextTabStop = 8 - ((col - 1) `mod` 8)
+                     in go (i + d) line (col + nextTabStop) atLineStart
+                  _
+                    -- Printable ASCII is the overwhelmingly common case and
+                    -- is never a space character, so it is settled before the
+                    -- 'isSpace' test.  Space itself (and any other space
+                    -- character) falls through to the guard below, which
+                    -- leaves 'atLineStart' alone exactly as before.
+                    | ch > ' ' && isAscii ch -> go (i + d) line (col + 1) False
+                    | isSpace ch -> go (i + d) line (col + 1) atLineStart
+                    | otherwise -> go (i + d) line (col + 1) False
+      (!finalLine, !finalCol, !finalAtLineStart) =
+        go 0 (lexerLine st) (lexerCol st) (lexerAtLineStart st)
    in st
         { -- The consumed text is a prefix of the input, so dropping its UTF-8
           -- byte length avoids a second scan of the characters.
-          lexerInput = TU.dropWord8 (TU.lengthWord8 consumed) (lexerInput st),
+          lexerInput = TU.dropWord8 nbytes (lexerInput st),
           lexerLine = finalLine,
           lexerCol = finalCol,
-          lexerByteOffset = finalByteOff,
+          lexerByteOffset = lexerByteOffset st + nbytes,
           lexerAtLineStart = finalAtLineStart
         }
 
@@ -468,8 +484,39 @@ utf8CharWidth ch =
       | code <= 0xFFFF -> 3
       | otherwise -> 4
 
+-- | Characters that may appear in a symbolic operator.
+--
+-- The ASCII branch lists exactly @:!#$%&*+./\<=>?\@\\^|-~@; every ASCII
+-- character that 'isUnicodeSymbol' would accept (@+ \< = > | ~ $@) is already
+-- in that list, so the split loses nothing.  It is written as a @case@ rather
+-- than @elem@ over a string because this predicate runs on nearly every lexed
+-- character and @elem@ would walk a 21-element list each time.
 isSymbolicOpChar :: Char -> Bool
-isSymbolicOpChar c = c `elem` (":!#$%&*+./<=>?@\\^|-~" :: String) || isUnicodeSymbol c
+isSymbolicOpChar c
+  | isAscii c =
+      case c of
+        ':' -> True
+        '!' -> True
+        '#' -> True
+        '$' -> True
+        '%' -> True
+        '&' -> True
+        '*' -> True
+        '+' -> True
+        '.' -> True
+        '/' -> True
+        '<' -> True
+        '=' -> True
+        '>' -> True
+        '?' -> True
+        '@' -> True
+        '\\' -> True
+        '^' -> True
+        '|' -> True
+        '-' -> True
+        '~' -> True
+        _ -> False
+  | otherwise = isUnicodeSymbol c
 
 isUnicodeSymbol :: Char -> Bool
 isUnicodeSymbol c =

@@ -71,9 +71,9 @@ conOperatorParser =
     symbolicConOp =
       tokenSatisfy "constructor operator" $ \tok ->
         case lexTokenKind tok of
-          TkConSym op -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConSym op))
+          TkConSym op -> Just (mkNameAt tok Nothing NameConSym op)
           TkQConSym modName op -> Just (mkNameAt tok (Just modName) NameConSym op)
-          TkReservedColon -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConSym ":"))
+          TkReservedColon -> Just (mkNameAt tok Nothing NameConSym ":")
           _ -> Nothing
     backtickConOp =
       MP.try $
@@ -507,9 +507,9 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
           let ann = mkAnnotation (lexTokenSpan tok')
           case lexTokenKind tok' of
             TkVarSym op -> pure (PAnn ann (PVar (mkUnqualifiedNameAt tok' NameVarSym op)))
-            TkConSym op -> pure (PAnn ann (PCon (qualifyName Nothing (mkUnqualifiedNameAt tok' NameConSym op)) [] []))
+            TkConSym op -> pure (PAnn ann (PCon (mkNameAt tok' Nothing NameConSym op) [] []))
             TkQConSym modName op -> pure (PAnn ann (PCon (mkNameAt tok' (Just modName) NameConSym op) [] []))
-            TkReservedColon -> pure (PAnn ann (PCon (qualifyName Nothing (mkUnqualifiedNameAt tok' NameConSym ":")) [] []))
+            TkReservedColon -> pure (PAnn ann (PCon (mkNameAt tok' Nothing NameConSym ":") [] []))
             TkReservedAt -> pure (PAnn ann (PVar (mkUnqualifiedNameAt tok' NameVarSym "@")))
             _ ->
               MP.customFailure
