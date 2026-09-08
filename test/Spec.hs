@@ -263,6 +263,7 @@ buildTests = do
             testCase "syntax utility functions cover public edge cases" test_syntaxUtilityFunctions,
             testCase "shrunk class default pattern binds make progress" test_shrunkClassDefaultPatternBindMakesProgress,
             testCase "parsed binders carry source spans" test_parsedBindersCarrySourceSpans,
+            testCase "every top-level declaration carries a source span" test_everyTopLevelDeclarationCarriesSourceSpan,
             testCase "shrunk arrow command infix lhs modules make progress" test_shrunkArrowCommandInfixLhsModuleMakesProgress,
             testCase "shrunk wildcard pattern binds do not cycle" test_shrunkWildcardPatternBindsDoNotCycle,
             testCase "shrunk infix expression left operands do not cycle" test_shrunkInfixExprLeftOperandsDoNotCycle,
@@ -600,6 +601,64 @@ test_parsedBindersCarrySourceSpans =
               assertUnqualifiedNameSpan "operator binder" "<input>" 3 2 3 3 49 50 operatorName
               assertUnqualifiedNameSpan "foreign binder" "<input>" 4 28 4 33 87 92 (foreignName foreignDecl)
           other -> assertFailure ("expected data, value, operator, and foreign declarations, got: " <> show other)
+
+-- | Every top-level declaration form must be wrapped in 'DeclAnn' with a real
+-- source span, so that consumers (e.g. haddock comment attachment) can locate
+-- declarations by position. Regression test for 'DeclPatSynSig', 'DeclDefault'
+-- and 'DeclSplice', which used to be returned unwrapped.
+test_everyTopLevelDeclarationCarriesSourceSpan :: Assertion
+test_everyTopLevelDeclarationCarriesSourceSpan =
+  let source =
+        T.unlines
+          [ "{-# LANGUAGE PatternSynonyms, RoleAnnotations, StandaloneDeriving #-}",
+            "{-# LANGUAGE StandaloneKindSignatures, TemplateHaskell, TypeData #-}",
+            "{-# LANGUAGE TypeFamilies #-}",
+            "module M where",
+            "import Data.Kind (Type)",
+            "type T :: Type -> Type",
+            "data T a = MkT a",
+            "type role T nominal",
+            "type data N = Z",
+            "newtype I a = I a",
+            "type P a = (a, a)",
+            "class C a where { m :: a -> a }",
+            "instance C Int where { m = id }",
+            "deriving instance Show (T Int)",
+            "default (Integer, Double)",
+            "infixr 5 `seq`",
+            "f, g :: Int -> Int",
+            "f = id",
+            "g = id",
+            "foreign import ccall \"puts\" c_puts :: Int -> IO Int",
+            "type family F a",
+            "data family DF a",
+            "type instance F Int = Bool",
+            "data instance DF Int = DFInt",
+            "{-# INLINE f #-}",
+            "pattern Q :: Int -> T Int",
+            "pattern Q x = MkT x",
+            "$(pure [])"
+          ]
+      -- 'DeclAnn' is the wrapper itself and 'DeclImplicitParam' only occurs in
+      -- local binding groups, so neither can appear at the top level.
+      nonTopLevelConstrs = Set.fromList ["DeclAnn", "DeclImplicitParam"]
+      allConstrs =
+        Set.fromList (map showConstr (dataTypeConstrs (dataTypeOf (undefined :: Decl))))
+          `Set.difference` nonTopLevelConstrs
+      (errs, modu) = parseModule defaultConfig source
+   in do
+        assertBool ("expected no parse errors, got: " <> show errs) (null errs)
+        let lacksSpan decl = case decl of
+              DeclAnn ann _ -> isNothing (fromAnnotation ann :: Maybe SourceSpan)
+              _ -> True
+            unannotated =
+              [showConstr (toConstr decl) | decl <- moduleDecls modu, lacksSpan decl]
+        assertEqual "declarations without a DeclAnn source span" [] unannotated
+        let covered = Set.fromList (map (showConstr . toConstr . peelDeclAnn) (moduleDecls modu))
+        assertEqual
+          "declaration forms not exercised by this fixture"
+          Set.empty
+          (allConstrs `Set.difference` covered)
 
 test_emptyCaseLayoutAtEof :: Assertion
 test_emptyCaseLayoutAtEof =
