@@ -642,12 +642,12 @@ operatorExprNameParser :: TokParser Name
 operatorExprNameParser =
   tokenSatisfy "operator" $ \tok ->
     case lexTokenKind tok of
-      TkVarSym sym -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym sym))
-      TkConSym sym -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConSym sym))
+      TkVarSym sym -> Just (mkNameAt tok Nothing NameVarSym sym)
+      TkConSym sym -> Just (mkNameAt tok Nothing NameConSym sym)
       TkQVarSym modName sym -> Just (mkNameAt tok (Just modName) NameVarSym sym)
       TkQConSym modName sym -> Just (mkNameAt tok (Just modName) NameConSym sym)
-      TkMinusOperator -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarSym "-"))
-      TkReservedColon -> Just (qualifyName Nothing (mkUnqualifiedNameAt tok NameConSym ":"))
+      TkMinusOperator -> Just (mkNameAt tok Nothing NameVarSym "-")
+      TkReservedColon -> Just (mkNameAt tok Nothing NameConSym ":")
       _ -> Nothing
 
 rhsParser :: TokParser (Rhs Expr)
@@ -1284,9 +1284,11 @@ implicitParamDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
   pure $ DeclImplicitParam name rhsExpr whereDecls
 
 varExprParser :: TokParser Expr
-varExprParser = do
-  (tok, name) <- identifierNameWithTokenParser
-  pure (EAnn (mkAnnotation (lexTokenSpan tok)) (EVar name))
+varExprParser =
+  tokenSatisfy "identifier" $ \tok ->
+    case identifierName tok of
+      Just name -> Just (EAnn (mkAnnotation (lexTokenSpan tok)) (EVar name))
+      Nothing -> Nothing
 
 implicitParamExprParser :: TokParser Expr
 implicitParamExprParser =
@@ -1307,7 +1309,7 @@ wildcardExprParser =
         Just $
           EAnn
             (mkAnnotation (lexTokenSpan tok))
-            (EVar (qualifyName Nothing (mkUnqualifiedNameAt tok NameVarId "_")))
+            (EVar (mkNameAt tok Nothing NameVarId "_"))
       _ -> Nothing
 
 -- | Parse Template Haskell quote brackets

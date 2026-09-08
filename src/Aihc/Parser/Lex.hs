@@ -296,8 +296,9 @@ lexIdentifier env st =
     c :< rest
       | isIdentStart c ->
           let hasMagicHash = hasExt MagicHash env
-              (seg, rest0) = consumeIdentTail hasMagicHash rest
-              firstChunk = TU.takeWord8 (utf8CharWidth c + TU.lengthWord8 seg) (lexerInput st)
+              !firstChunkLen = utf8CharWidth c + identTailBytes hasMagicHash rest
+              firstChunk = TU.takeWord8 firstChunkLen (lexerInput st)
+              rest0 = TU.dropWord8 firstChunkLen (lexerInput st)
               (consumed, rest1, isQualified) = gatherQualified hasMagicHash False firstChunk rest0
            in case (isQualified || isConIdStart c, rest1) of
                 (True, '.' :< dotRest@(opChar :< _))
@@ -356,15 +357,23 @@ lexIdentifier env st =
               | isConIdStart firstChar -> TkConId ident
               | otherwise -> TkVarId ident
 
+-- | Byte length of the identifier tail at the start of @inp@, including any
+-- run of trailing @#@ when MagicHash is enabled.
+--
+-- 'lexIdentifier' only needs this length, so returning it directly avoids
+-- materialising the two 'Text' slices that a @span@ would produce for every
+-- identifier in the input.
+identTailBytes :: Bool -> Text -> Int
+identTailBytes hasMH inp =
+  let !tailBytes = TU.lengthWord8 (T.takeWhile isIdentTail inp)
+   in if hasMH
+        then tailBytes + TU.lengthWord8 (T.takeWhile (== '#') (TU.dropWord8 tailBytes inp))
+        else tailBytes
+
 consumeIdentTail :: Bool -> Text -> (Text, Text)
 consumeIdentTail hasMH inp =
-  let (tailPart, rest) = T.span isIdentTail inp
-   in case rest of
-        '#' :< _
-          | hasMH ->
-              let hashes = T.takeWhile (== '#') rest
-               in (tailPart <> hashes, T.drop (T.length hashes) rest)
-        _ -> (tailPart, rest)
+  let !n = identTailBytes hasMH inp
+   in (TU.takeWord8 n inp, TU.dropWord8 n inp)
 
 lexImplicitParam :: LexerEnv -> LexerState -> Maybe (LexToken, LexerState)
 lexImplicitParam env st
@@ -1024,14 +1033,28 @@ takeQuoter input =
                in go (n + segLen) (T.drop (T.length tailChars) more)
         _ -> (T.take n input, chars)
 
+-- | ASCII covers nearly every character in real source, and the Unicode
+-- branches below are all guarded by @not (isAscii c)@ anyway, so splitting on
+-- 'isAscii' first keeps the general-category tables out of the hot path.
 isIdentStart :: Char -> Bool
-isIdentStart c = isAsciiUpper c || isAsciiLower c || c == '_' || isUniSmall c || isUniLarge c || isUniOtherLetter c
+isIdentStart c
+  | isAscii c = isAsciiUpper c || isAsciiLower c || c == '_'
+  | otherwise = isUniSmall c || isUniLarge c || isUniOtherLetter c
 
 isVarIdentifierStartChar :: Char -> Bool
 isVarIdentifierStartChar c = c == '_' || isAsciiLower c || isUniSmall c
 
+-- | Identifier continuation characters.
+--
+-- For ASCII, 'isIdentContinue' reduces to 'isDigit': ASCII has no
+-- LetterNumber, ModifierLetter, NonSpacingMark or OtherNumber characters.  The
+-- ASCII branch below is therefore the same predicate as the general one, but
+-- without a general-category lookup -- which matters because this runs on
+-- every character of every identifier plus the character that ends it.
 isIdentTail :: Char -> Bool
-isIdentTail c = isIdentStart c || isIdentContinue c || c == '\''
+isIdentTail c
+  | isAscii c = isAsciiUpper c || isAsciiLower c || isDigit c || c == '_' || c == '\''
+  | otherwise = isIdentStart c || isIdentContinue c
 
 isConIdStart :: Char -> Bool
 isConIdStart c = isAsciiUpper c || isUniLarge c
@@ -1065,39 +1088,62 @@ startsWithSymOp t =
     c :< _ -> isSymbolicOpChar c
     _ -> False
 
+-- | Classify an identifier as a keyword, if it is one.
+--
+-- Grouped by byte length so that an ordinary identifier is rejected after a
+-- single length comparison instead of being compared against all thirty
+-- keywords in turn.  Every keyword is ASCII, so its byte length is its
+-- character length; a non-ASCII identifier simply matches none of the
+-- literals in its group.
 keywordTokenKind :: ExtensionSet -> Text -> Maybe LexTokenKind
 keywordTokenKind exts txt =
-  case txt of
-    "case" -> Just TkKeywordCase
-    "class" -> Just TkKeywordClass
-    "data" -> Just TkKeywordData
-    "default" -> Just TkKeywordDefault
-    "deriving" -> Just TkKeywordDeriving
-    "do" -> Just TkKeywordDo
-    "else" -> Just TkKeywordElse
-    "forall" -> Just TkKeywordForall
-    "foreign" -> Just TkKeywordForeign
-    "if" -> Just TkKeywordIf
-    "import" -> Just TkKeywordImport
-    "in" -> Just TkKeywordIn
-    "infix" -> Just TkKeywordInfix
-    "infixl" -> Just TkKeywordInfixl
-    "infixr" -> Just TkKeywordInfixr
-    "instance" -> Just TkKeywordInstance
-    "let" -> Just TkKeywordLet
-    "module" -> Just TkKeywordModule
-    "newtype" -> Just TkKeywordNewtype
-    "of" -> Just TkKeywordOf
-    "then" -> Just TkKeywordThen
-    "type" -> Just TkKeywordType
-    "where" -> Just TkKeywordWhere
-    "_" -> Just TkKeywordUnderscore
-    "proc" | memberExtension Arrows exts -> Just TkKeywordProc
-    "rec" | memberExtension Arrows exts || memberExtension RecursiveDo exts -> Just TkKeywordRec
-    "mdo" | memberExtension RecursiveDo exts -> Just TkKeywordMdo
-    "pattern" | memberExtension PatternSynonyms exts -> Just TkKeywordPattern
-    "by" | memberExtension TransformListComp exts -> Just TkKeywordBy
-    "using" | memberExtension TransformListComp exts -> Just TkKeywordUsing
+  case TU.lengthWord8 txt of
+    1 -> case txt of
+      "_" -> Just TkKeywordUnderscore
+      _ -> Nothing
+    2 -> case txt of
+      "do" -> Just TkKeywordDo
+      "if" -> Just TkKeywordIf
+      "in" -> Just TkKeywordIn
+      "of" -> Just TkKeywordOf
+      "by" | memberExtension TransformListComp exts -> Just TkKeywordBy
+      _ -> Nothing
+    3 -> case txt of
+      "let" -> Just TkKeywordLet
+      "rec" | memberExtension Arrows exts || memberExtension RecursiveDo exts -> Just TkKeywordRec
+      "mdo" | memberExtension RecursiveDo exts -> Just TkKeywordMdo
+      _ -> Nothing
+    4 -> case txt of
+      "case" -> Just TkKeywordCase
+      "data" -> Just TkKeywordData
+      "else" -> Just TkKeywordElse
+      "then" -> Just TkKeywordThen
+      "type" -> Just TkKeywordType
+      "proc" | memberExtension Arrows exts -> Just TkKeywordProc
+      _ -> Nothing
+    5 -> case txt of
+      "class" -> Just TkKeywordClass
+      "infix" -> Just TkKeywordInfix
+      "where" -> Just TkKeywordWhere
+      "using" | memberExtension TransformListComp exts -> Just TkKeywordUsing
+      _ -> Nothing
+    6 -> case txt of
+      "forall" -> Just TkKeywordForall
+      "import" -> Just TkKeywordImport
+      "infixl" -> Just TkKeywordInfixl
+      "infixr" -> Just TkKeywordInfixr
+      "module" -> Just TkKeywordModule
+      _ -> Nothing
+    7 -> case txt of
+      "default" -> Just TkKeywordDefault
+      "foreign" -> Just TkKeywordForeign
+      "newtype" -> Just TkKeywordNewtype
+      "pattern" | memberExtension PatternSynonyms exts -> Just TkKeywordPattern
+      _ -> Nothing
+    8 -> case txt of
+      "deriving" -> Just TkKeywordDeriving
+      "instance" -> Just TkKeywordInstance
+      _ -> Nothing
     _ -> Nothing
 
 reservedOpTokenKind :: Text -> Maybe LexTokenKind

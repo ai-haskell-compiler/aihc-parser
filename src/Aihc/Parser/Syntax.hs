@@ -650,9 +650,14 @@ applyExtensionSetting setting extensions =
     EnableExtension ext -> ext : filter (/= ext) extensions
     DisableExtension ext -> filter (/= ext) extensions
 
+-- | 'impliedExtensions' as a map.  The fixpoint below looks up every enabled
+-- extension on every iteration, which is too many linear scans of the table.
+impliedExtensionMap :: Map.Map Extension [ExtensionSetting]
+impliedExtensionMap = Map.fromList impliedExtensions
+
 applyImpliedExtensions :: [Extension] -> [Extension]
 applyImpliedExtensions extensions =
-  let settings = concat $ mapMaybe (`lookup` impliedExtensions) extensions
+  let settings = concat $ mapMaybe (`Map.lookup` impliedExtensionMap) extensions
       newExtensions = foldr applyExtensionSetting extensions settings
    in if sort newExtensions == sort extensions then extensions else applyImpliedExtensions newExtensions
 

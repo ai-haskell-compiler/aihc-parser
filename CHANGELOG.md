@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Performance
+
+- Cut parser wall time by about 10%, allocations by about 4%, and peak heap by
+  about 27% on the Stackage corpus benchmark. The lexer decides ASCII
+  characters without consulting the Unicode general-category tables, groups
+  the keyword table by length, and derives byte offsets from the length of the
+  consumed text; the token stream builds its successor strictly instead of
+  through a thunk; identifier atoms are built inside a single token match; and
+  implied `LANGUAGE` extensions are resolved through a map rather than a
+  linear scan.
+
 ### Fixed
 
 - Reuse parsed expressions in nested list, record, and view patterns to avoid

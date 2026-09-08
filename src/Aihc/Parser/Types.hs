@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -284,17 +285,19 @@ stepOne ts
                   FromSource
                     | TkSpecialSemicolon <- kind -> tokStreamPendingPragmas ts
                     | otherwise -> []
-           in Just
-                ( tok,
-                  normalizeTokStreamParts
-                    (tokStreamRawTokens ts)
-                    (tokStreamLayoutState ts)
-                    rest
-                    pendingPragmas
-                    (Just tok)
-                    (tokStreamExtensionSet ts)
-                    isEOF
-                )
+              -- The successor is demanded as soon as the parser asks for the
+              -- token after this one, which is what almost always happens, so
+              -- building it here avoids a thunk per token.
+              !next =
+                normalizeTokStreamParts
+                  (tokStreamRawTokens ts)
+                  (tokStreamLayoutState ts)
+                  rest
+                  pendingPragmas
+                  (Just tok)
+                  (tokStreamExtensionSet ts)
+                  isEOF
+           in Just (tok, next)
         [] ->
           Nothing
 
