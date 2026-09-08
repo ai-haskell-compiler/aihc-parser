@@ -222,6 +222,7 @@ buildTests = do
                 testCase "runs the parser when its result is forced" test_lazyForcesParserWhenResultIsForced,
                 testCase "preserves errors from the lazy parser" test_lazyPreservesErrors
               ],
+            testCase "preserves patterns in expression and binding positions" test_bindingPatternFallback,
             testCase "emits lexer error token for unterminated strings" test_unterminatedStringProducesErrorToken,
             testCase "emits lexer error token for unterminated block comments" test_unterminatedBlockCommentProducesErrorToken,
             testCase "applies hash line directives to subsequent tokens" test_hashLineDirectiveUpdatesSpan,
@@ -2273,3 +2274,27 @@ prop_generatedTypeNamesSupportEmptyBundledImports =
             ]
         )
         (null failures)
+
+-- Each suffix must trigger the fallback without an earlier pattern prefix.
+test_bindingPatternFallback :: Assertion
+test_bindingPatternFallback =
+  mapM_ check ["K !x", "K ~x", "K y@(Just z)", "x@(Just y)", "(id -> x)", "x :: Int", "(x, y)", "(-1)", "(:)", "(,)", "[x, y]"]
+  where
+    config = defaultConfig {parserExtensions = [BangPatterns, ViewPatterns, ScopedTypeVariables]}
+    check source = case parsePattern config source of
+      ParseErr errs -> assertFailure (formatParseErrors "<test>" (Just source) errs)
+      ParseOk expected ->
+        mapM_
+          (checkContext (stripAnnotations expected))
+          [ "do { " <> source <> " <- xs; pure () }",
+            "[() | " <> source <> " <- xs]",
+            "case () of { _ | " <> source <> " <- xs -> () }"
+          ]
+    checkContext expected source = case parseExpr config source of
+      ParseErr errs -> assertFailure (formatParseErrors "<test>" (Just source) errs)
+      ParseOk expr -> case stripAnnotations expr of
+        EDo [DoBind pat _, DoExpr _] _ -> assertEqual (T.unpack source) expected pat
+        EListComp _ [CompGen pat _] -> assertEqual (T.unpack source) expected pat
+        ECase _ [CaseAlt _ _ (GuardedRhss _ [GuardedRhs _ [GuardPat pat _] _] Nothing)] ->
+          assertEqual (T.unpack source) expected pat
+        actual -> assertFailure ("unexpected binding structure: " <> show actual)

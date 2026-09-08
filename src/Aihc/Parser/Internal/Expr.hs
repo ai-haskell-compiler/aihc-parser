@@ -31,6 +31,7 @@ import Text.Megaparsec qualified as MP
 -- | Parse an expression, then optionally consume @<-@ and a right-hand side.
 -- If the arrow is present, the expression is converted to a pattern via
 -- 'checkPattern' and the result is a bind; otherwise it is an expression.
+-- Retry with the pattern parser for syntax that expressions cannot contain.
 exprOrPatternBindParser ::
   TokParser Expr ->
   TokParser Expr ->
@@ -38,13 +39,30 @@ exprOrPatternBindParser ::
   (Expr -> a) ->
   TokParser a
 exprOrPatternBindParser exprP rhsP bindCtor exprCtor = do
-  expr <- exprP
-  mArrow <- MP.optional (expectedTok TkReservedLeftArrow)
-  case mArrow of
-    Just () -> do
-      pat <- liftCheck (checkPattern expr)
-      bindCtor pat <$> rhsP
-    Nothing -> pure (exprCtor expr)
+  lhs <- MP.try exprOrPattern <|> patternBind
+  case lhs of
+    Left pat -> bindCtor pat <$> rhsP
+    Right expr -> pure (exprCtor expr)
+  where
+    -- Keep the right-hand side outside 'try'. Only the left-hand side
+    -- can require a second parse as a pattern.
+    exprOrPattern = do
+      expr <- exprP
+      -- An expression can stop before a pattern-only argument or suffix.
+      MP.notFollowedBy $
+        expectedTok TkReservedAt
+          <|> expectedTok TkPrefixBang
+          <|> expectedTok TkPrefixTilde
+          <|> expectedTok TkReservedDoubleColon
+      mArrow <- MP.optional (expectedTok TkReservedLeftArrow)
+      case mArrow of
+        Just () -> Left <$> liftCheck (checkPattern expr)
+        Nothing -> pure (Right expr)
+
+    patternBind = do
+      pat <- patternParser
+      expectedTok TkReservedLeftArrow
+      pure (Left pat)
 
 -- | Report core:
 --
@@ -197,41 +215,12 @@ doStmtParser = do
   case lexTokenKind tok of
     TkKeywordLet -> MP.try doLetStmtParser <|> doBindOrExprStmtParser
     TkKeywordRec -> doRecStmtParser
-    _ -> MP.try doPatBindStmtParser <|> doBindOrExprStmtParser
+    _ -> doBindOrExprStmtParser
 
 doBindOrExprStmtParser :: TokParser (DoStmt Expr)
-doBindOrExprStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
-  mExpr <- MP.optional . MP.try $ exprParser
-  case mExpr of
-    Nothing -> do
-      pat <- patternParser
-      expectedTok TkReservedLeftArrow
-      rhs <- region "while parsing '<-' binding" exprParser
-      pure (DoBind pat rhs)
-    Just expr -> do
-      tok <- lookAhead anySingle
-      case lexTokenKind tok of
-        TkReservedAt -> do
-          pat <- patternParser
-          expectedTok TkReservedLeftArrow
-          rhs <- region "while parsing '<-' binding" exprParser
-          pure (DoBind pat rhs)
-        _ -> do
-          mArrow <- MP.optional (expectedTok TkReservedLeftArrow)
-          case mArrow of
-            Just () -> do
-              pat <- liftCheck (checkPattern expr)
-              rhs <- region "while parsing '<-' binding" exprParser
-              pure (DoBind pat rhs)
-            Nothing ->
-              pure (DoExpr expr)
-
-doPatBindStmtParser :: TokParser (DoStmt Expr)
-doPatBindStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
-  pat <- patternParser
-  expectedTok TkReservedLeftArrow
-  expr <- region "while parsing '<-' binding" exprParser
-  pure (DoBind pat expr)
+doBindOrExprStmtParser =
+  withSpanAnn (DoAnn . mkAnnotation) $
+    exprOrPatternBindParser exprParser (region "while parsing '<-' binding" exprParser) DoBind DoExpr
 
 parseLetDeclsParser :: TokParser [Decl]
 parseLetDeclsParser = expectedTok TkKeywordLet *> bracedDeclsMaybeEmpty
@@ -741,7 +730,7 @@ guardQualifierParser arrowKind = do
   tok <- lookAhead anySingle
   case lexTokenKind tok of
     TkKeywordLet -> MP.try guardLetParser <|> guardBindOrExprParser arrowKind
-    _ -> MP.try guardPatBindParser <|> guardBindOrExprParser arrowKind
+    _ -> guardBindOrExprParser arrowKind
 
 -- | Parse a guard expression or pattern bind.
 guardBindOrExprParser :: RhsArrowKind -> TokParser GuardQualifier
@@ -752,12 +741,6 @@ guardBindOrExprParser arrowKind =
       exprParser
       GuardPat
       GuardExpr
-
-guardPatBindParser :: TokParser GuardQualifier
-guardPatBindParser = withSpanAnn (GuardAnn . mkAnnotation) $ do
-  pat <- patternParser
-  expectedTok TkReservedLeftArrow
-  GuardPat pat <$> exprParser
 
 guardLetParser :: TokParser GuardQualifier
 guardLetParser = withSpanAnn (GuardAnn . mkAnnotation) $ do
@@ -1053,7 +1036,7 @@ compStmtParser = do
   case lexTokenKind tok of
     TkKeywordLet -> MP.try compLetStmtParser <|> compGenOrGuardParser
     TkKeywordThen -> compTransformStmtParser <|> compGenOrGuardParser
-    _ -> MP.try compPatGenParser <|> compGenOrGuardParser
+    _ -> compGenOrGuardParser
 
 -- | Parse a TransformListComp qualifier: @then f@, @then f by e@,
 -- @then group by e using f@, or @then group using f@.
@@ -1191,13 +1174,6 @@ compGenOrGuardParser :: TokParser CompStmt
 compGenOrGuardParser =
   withSpanAnn (CompAnn . mkAnnotation) $
     exprOrPatternBindParser exprParser (region "while parsing '<-' generator" exprParser) CompGen CompGuard
-
-compPatGenParser :: TokParser CompStmt
-compPatGenParser = withSpanAnn (CompAnn . mkAnnotation) $ do
-  pat <- patternParser
-  expectedTok TkReservedLeftArrow
-  expr <- region "while parsing '<-' generator" exprParser
-  pure (CompGen pat expr)
 
 compLetStmtParser :: TokParser CompStmt
 compLetStmtParser = withSpanAnn (CompAnn . mkAnnotation) $ do

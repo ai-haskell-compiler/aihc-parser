@@ -43,7 +43,7 @@ timeoutMicros = 1000000
 generatedCaseSize :: Int
 generatedCaseSize = 200
 
--- | Depth for exponential parenthesized-do cases. n=16 already exceeds 1s.
+-- | Depth for the remaining parenthesized-do case.
 xfailParenDoSize :: Int
 xfailParenDoSize = 32
 
@@ -245,55 +245,24 @@ generatedPerfCases =
     mkGeneratedPerfCase "string-escapes" (mkExprModule (escapedStringExpr (generatedCaseSize * 500))),
     mkGeneratedPerfCase "nested-application" (mkExprModule (nestedAppExpr generatedCaseSize)),
     mkGeneratedPerfCaseWithStatus "xfail-invalid-module" "module Generated where\nvalue = { x = 1, }\n" StatusXFail "regression coverage",
-    -- Exponential: parenthesized block expressions as do statements.
-    mkGeneratedXFailCase
-      "xfail-nested-paren-do"
-      xfailParenDoSize
-      []
-      (mkExprModule (nestedParenDoExpr xfailParenDoSize))
-      "nested parenthesized do expressions cause exponential backtracking",
-    mkGeneratedXFailCase
-      "xfail-nested-paren-do-case"
-      xfailParenDoSize
-      []
-      (mkExprModule (nestedParenDoCaseExpr xfailParenDoSize))
-      "nested parenthesized case expressions in do cause exponential backtracking",
-    mkGeneratedXFailCase
-      "xfail-nested-paren-do-if"
-      xfailParenDoSize
-      []
-      (mkExprModule (nestedParenDoIfExpr xfailParenDoSize))
-      "nested parenthesized if expressions in do cause exponential backtracking",
-    mkGeneratedXFailCase
-      "xfail-nested-paren-do-lambda"
-      xfailParenDoSize
-      []
-      (mkExprModule (nestedParenDoLambdaExpr xfailParenDoSize))
-      "nested parenthesized lambda expressions in do cause exponential backtracking",
-    mkGeneratedXFailCase
-      "xfail-nested-paren-do-let"
-      xfailParenDoSize
-      []
-      (mkExprModule (nestedParenDoLetExpr xfailParenDoSize))
-      "nested parenthesized let expressions in do cause exponential backtracking",
-    mkGeneratedXFailCase
-      "xfail-nested-paren-do-comp"
-      xfailParenDoSize
-      []
-      (mkCompModule (nestedParenDoExpr xfailParenDoSize))
-      "nested parenthesized do expressions in a list comprehension cause exponential backtracking",
-    mkGeneratedXFailCase
-      "xfail-nested-paren-do-guard"
-      xfailParenDoSize
-      []
-      (mkGuardModule (nestedParenDoExpr xfailParenDoSize))
-      "nested parenthesized do expressions in a guard cause exponential backtracking",
-    mkGeneratedXFailCase
-      "xfail-nested-paren-mdo"
-      xfailParenDoSize
+    -- Nested block expressions must not be parsed again as patterns.
+    mkGeneratedPerfCase "nested-paren-do" (mkExprModule (nestedParenDoExpr generatedCaseSize)),
+    mkGeneratedPerfCase "nested-paren-do-case" (mkExprModule (nestedParenDoCaseExpr generatedCaseSize)),
+    mkGeneratedPerfCase "nested-paren-do-if" (mkExprModule (nestedParenDoIfExpr generatedCaseSize)),
+    mkGeneratedPerfCase "nested-paren-do-lambda" (mkExprModule (nestedParenDoLambdaExpr generatedCaseSize)),
+    mkGeneratedPerfCase "nested-paren-do-let" (mkExprModule (nestedParenDoLetExpr generatedCaseSize)),
+    mkGeneratedPerfCase "nested-paren-do-comp" (mkCompModule (nestedParenDoExpr generatedCaseSize)),
+    mkGeneratedPerfCase "nested-paren-do-guard" (mkGuardModule (nestedParenDoExpr generatedCaseSize)),
+    mkGeneratedPerfCase
+      "nested-paren-do-bind"
+      (mkExprModule (nestedWrap "do { x <- (" "); pure x }" "pure 1" generatedCaseSize)),
+    mkGeneratedPerfCaseFull
+      "nested-paren-mdo"
+      generatedCaseSize
       [RecursiveDo]
-      (mkExprModule ("mdo { (" <> nestedParenDoExpr xfailParenDoSize <> ") }"))
-      "nested parenthesized do expressions in mdo cause exponential backtracking",
+      (mkExprModule ("mdo { (" <> nestedParenDoExpr generatedCaseSize <> ") }"))
+      StatusPass
+      "",
     mkGeneratedXFailCase
       "xfail-nested-paren-do-proc"
       xfailParenDoSize
@@ -331,24 +300,27 @@ generatedPerfCases =
       []
       (mkLambdaModule (nestedListPattern xfailListPatternSize))
       "nested list patterns in lambda cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-list-pattern-do"
+    mkGeneratedPerfCaseFull
+      "nested-list-pattern-do"
       xfailListPatternSize
       []
       (mkDoStmtModule (nestedListPattern xfailListPatternSize))
-      "nested list patterns in do cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-list-pattern-guard"
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-list-pattern-guard"
       xfailListPatternSize
       []
       (mkGuardModule (nestedListPattern xfailListPatternSize))
-      "nested list patterns in a guard cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-list-pattern-comp"
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-list-pattern-comp"
       xfailListPatternSize
       []
       (mkCompModule (nestedListPattern xfailListPatternSize))
-      "nested list patterns in a list comprehension cause quadratic view-pattern tries",
+      StatusPass
+      "",
     mkGeneratedXFailCase
       "xfail-nested-list-pattern-where"
       xfailListPatternSize
