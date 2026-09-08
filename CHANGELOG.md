@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Removed exponential backtracking for nested parenthesized block expressions
+  in `do` statements, guards, and list comprehensions. Parse expressions first
+  and use the pattern parser when pattern-only syntax requires it. This also
+  speeds up nested list expressions in these positions.
+
 ## [3.0.0.0] - 2026-09-06
 
 ### Changed
