@@ -31,11 +31,9 @@ import Aihc.Parser.Bench.Tarball
     isIncludeEntry,
   )
 import Aihc.Parser.Syntax qualified as Syntax
-import Control.Concurrent.Async (replicateConcurrently_)
-import Control.Concurrent.Chan (newChan, readChan, writeChan)
 import Control.DeepSeq (deepseq)
 import Control.Exception (SomeException, bracket, evaluate, try)
-import Control.Monad (forM_, replicateM_, unless, void)
+import Control.Monad (forM_, unless, void)
 import Data.ByteString qualified as BS
 import Data.List (nub, stripPrefix)
 import Data.Map.Strict qualified as Map
@@ -44,7 +42,6 @@ import Data.Text qualified as T
 import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TIO
 import GHC.Clock (getMonotonicTimeNSec)
-import GHC.Conc (getNumCapabilities)
 import GHC.Stats qualified as Stats
 import Language.Preprocessor.Cpphs (BoolOptions (..), CpphsOptions (..), defaultCpphsOptions, parseOptions, runCpphs)
 import System.Directory
@@ -286,11 +283,18 @@ parseGhc entry =
     (entryDependencies entry)
     (entryContents entry)
 
+-- | The three preprocessor benchmarks below all run their corpus
+-- sequentially.  What the CPP table reports is single-threaded throughput,
+-- and running the tools concurrently measured how well each one overlapped
+-- with itself instead -- which flattered @clang -E@, whose work is in
+-- subprocesses, over the two in-process Haskell preprocessors.  Sequential
+-- also keeps the numbers reproducible rather than dependent on the core count
+-- of whoever regenerated the report.
 benchmarkAihcCpp :: Corpus -> IO ToolResult
 benchmarkAihcCpp Corpus {corpusCppEntries, corpusIncludeMap} = do
   timed <-
     timeAction $
-      runConcurrently_ corpusCppEntries $ \entry -> do
+      forM_ corpusCppEntries $ \entry -> do
         let output =
               runCppWithIncludes
                 corpusIncludeMap
@@ -305,7 +309,7 @@ benchmarkCpphs :: FilePath -> [TarballEntry] -> IO ToolResult
 benchmarkCpphs root entries = do
   timed <-
     timeAction $
-      runConcurrently_ entries $ \entry -> do
+      forM_ entries $ \entry -> do
         result <-
           try
             ( do
@@ -354,7 +358,7 @@ benchmarkClang root entries = do
           ]
   timed <-
     timeAction $
-      runConcurrently_ chunks $ \(baseArgs, chunk) ->
+      forM_ chunks $ \(baseArgs, chunk) ->
         runExternal "clang" (baseArgs ++ chunk)
   pure ToolResult {toolName = "clang -E", toolNanos = timedNanos timed}
 
@@ -392,20 +396,6 @@ chunkArgs baseArgs = go [] baseSize
           go (path : current) (currentSize + pathSize) paths
       where
         pathSize = length path + 1
-
-runConcurrently_ :: [a] -> (a -> IO ()) -> IO ()
-runConcurrently_ items action = do
-  jobs <- max 1 <$> getNumCapabilities
-  queue <- newChan
-  forM_ items (writeChan queue . Just)
-  replicateM_ jobs (writeChan queue Nothing)
-  replicateConcurrently_ jobs (worker queue)
-  where
-    worker queue = do
-      item <- readChan queue
-      case item of
-        Nothing -> pure ()
-        Just x -> action x >> worker queue
 
 runExternal :: FilePath -> [String] -> IO ()
 runExternal exe args = do
@@ -479,6 +469,8 @@ renderReport ReportOptions {reportSnapshot} Corpus {corpusPackageCount, corpusFi
         "## Parser Performance",
         "",
         "Parser input is preprocessed with `aihc-cpp` before measurement. GHC is the baseline. Allocation and peak heap values are fractions of GHC's totals (lower is better); peak heap is the RTS maximum live heap.",
+        "",
+        "Neither parser sets an `-O` level, so both are built at the Cabal default of `-O1` and the speed column compares parsers rather than optimisation levels. For reference, `-O2` is worth about 10% to `ghc-lib-parser` and about 6% to `aihc-parser`.",
         "",
         "| Parser | Relative Speed | Relative Allocations | Relative Peak Heap |",
         "| --- | ---: | ---: | ---: |"
