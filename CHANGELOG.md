@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Reuse parsed expressions in nested list, record, and view patterns to avoid
+  quadratic backtracking.
+- Limit retries for local function bindings to the binding head. Invalid
+  nested `let` expressions no longer cause exponential backtracking.
+- Parse parenthesized arrow commands before trying expression or pattern
+  bindings. Deeply nested commands no longer cause quadratic backtracking.
+
 - Removed exponential backtracking for nested parenthesized block expressions
   in `do` statements, guards, and list comprehensions. Parse expressions first
   and use the pattern parser when pattern-only syntax requires it. This also

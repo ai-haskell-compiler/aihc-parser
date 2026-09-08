@@ -348,16 +348,32 @@ listPatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
 -- fields, where there is no surrounding pair of parens to disambiguate the
 -- view-pattern arrow from the enclosing syntax.
 --
+-- Reuse a complete expression as a pattern when there is no view arrow.
+-- This avoids parsing each nested list or record again.
+--
 -- This parser is recursive so that deeply nested view patterns such as
 -- @expr1 -> expr2 -> pat@ are accepted without requiring explicit parentheses
 -- around each intermediate view pattern.
 subpatternWithBareViewParser :: TokParser Pattern
 subpatternWithBareViewParser = do
-  mView <- MP.optional . MP.try $ do
+  mResult <- MP.optional . MP.try $ do
     expr <- exprParser
-    expectedTok TkReservedRightArrow
-    PView expr <$> subpatternWithBareViewParser
-  maybe patternParser pure mView
+    tok <- lookAhead anySingle
+    case lexTokenKind tok of
+      TkReservedRightArrow -> pure (Left expr)
+      TkSpecialComma -> Right <$> liftCheck (checkPattern expr)
+      TkSpecialRBracket -> Right <$> liftCheck (checkPattern expr)
+      TkSpecialRBrace -> Right <$> liftCheck (checkPattern expr)
+      TkSpecialRParen -> Right <$> liftCheck (checkPattern expr)
+      TkSpecialUnboxedRParen -> Right <$> liftCheck (checkPattern expr)
+      TkReservedPipe -> Right <$> liftCheck (checkPattern expr)
+      _ -> fail "incomplete element parse"
+  case mResult of
+    Just (Left expr) -> do
+      expectedTok TkReservedRightArrow
+      PView expr <$> subpatternWithBareViewParser
+    Just (Right pat) -> pure pat
+    Nothing -> patternParser
 
 parenOrTuplePatternParser :: TokParser Pattern
 parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
@@ -465,7 +481,7 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
           isAs <- startsWithAsPattern
           if isAs
             then (False,) <$> patternParser
-            else (False,) <$> exprThenReclassify
+            else (False,) <$> subpatternWithBareViewParser
       where
         -- Try to parse an operator as a pattern if it's alone (followed by closing delim),
         -- otherwise fall back to parsing as an expression.
@@ -482,7 +498,7 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
             Just TkSpecialComma -> (True,) <$> operatorPatternParser
             Just TkReservedPipe -> (True,) <$> operatorPatternParser
             -- Otherwise, try parsing as expression (for cases like (x + y))
-            _ -> (False,) <$> exprThenReclassify
+            _ -> (False,) <$> subpatternWithBareViewParser
 
         -- Parse an operator token as a variable or constructor pattern.
         operatorPatternParser :: TokParser Pattern
@@ -502,39 +518,6 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
                     unexpectedExpecting = "operator token",
                     unexpectedContext = []
                   }
-
-    -- Try to parse as expression, then reclassify via checkPattern.
-    -- When exprParser fails, does not consume the full element (e.g.,
-    -- '@' from an as-pattern), or checkPattern rejects it (e.g., variable
-    -- operator in infix position), fall back to patternParser.
-    --
-    -- View patterns within tuple elements are also handled here: if '->'
-    -- follows the parsed expression, it is a view pattern.
-    exprThenReclassify :: TokParser Pattern
-    exprThenReclassify = do
-      mResult <- MP.optional . MP.try $ do
-        expr <- exprParser
-        -- Verify the expression consumed the full element: the next token
-        -- must be a valid delimiter in paren/tuple/sum context. If not
-        -- (e.g., '@' from an as-pattern), the expression parser stopped
-        -- too early and we should backtrack to patternParser.
-        tok <- lookAhead anySingle
-        case lexTokenKind tok of
-          TkReservedRightArrow -> pure (Left expr) -- view pattern: defer arrow handling
-          TkSpecialComma -> Right <$> liftCheck (checkPattern expr)
-          TkSpecialRParen -> Right <$> liftCheck (checkPattern expr)
-          TkSpecialUnboxedRParen -> Right <$> liftCheck (checkPattern expr)
-          TkReservedPipe -> Right <$> liftCheck (checkPattern expr)
-          _ -> fail "incomplete element parse"
-      case mResult of
-        Just (Left expr) -> do
-          -- View pattern: expr -> pattern
-          expectedTok TkReservedRightArrow
-          PView expr <$> subpatternWithBareViewParser
-        Just (Right pat) ->
-          pure pat
-        Nothing ->
-          patternParser
 
     tupleOrParenPatternParser tupleFlavor closeTok = do
       (isBareOp, first) <- parenPatElementParser

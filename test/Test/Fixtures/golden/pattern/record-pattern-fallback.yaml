@@ -1,0 +1,6 @@
+extensions: [BangPatterns, ViewPatterns]
+input: |
+  Box {first = [[x]], second = id -> K !y, third = z@(Just w)}
+ast: |-
+  PRecord "Box" {"first" = PList [PList [PVar "x"]], "second" = PView (EVar "id") (PCon "K" [PStrict (PVar "y")]), "third" = PAs UnqualifiedName {"z"} (PParen (PCon "Just" [PVar "w"]))}
+status: pass

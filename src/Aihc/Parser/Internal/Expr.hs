@@ -1231,7 +1231,7 @@ localDeclsParser = do
     <|> implicitParamDeclParser
     <|> fixityDeclParser
     <|> (if typeSigPrefix then localTypeSigDeclsParser else MP.empty)
-    <|> MP.try localFunctionDeclParser
+    <|> localFunctionDeclParser
     <|> localPatternDeclParser
 
 localTypeSigDeclsParser :: TokParser Decl
@@ -1249,7 +1249,12 @@ localTypeSigDeclsParser =
 
 localFunctionDeclParser :: TokParser Decl
 localFunctionDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
-  (headForm, name, pats) <- functionHeadParserWith patParser apatParser
+  -- Only the head can require a retry as a pattern binding. A failed body
+  -- must not cause the same nested declarations to be parsed again.
+  (headForm, name, pats) <- MP.try $ do
+    headParts <- functionHeadParserWith patParser apatParser
+    lookAhead (expectedTok TkReservedEquals <|> expectedTok TkReservedPipe)
+    pure headParts
   functionBindDecl headForm name pats <$> equationRhsParser
 
 localPatternDeclParser :: TokParser Decl
