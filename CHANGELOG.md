@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Wrap `DeclPatSynSig`, `DeclDefault`, and `DeclSplice` in `DeclAnn` with a
+  source span, like every other top-level declaration. Consumers that locate
+  declarations by span (such as attaching `-- |` comments) can now handle
+  pattern synonym signatures, `default` declarations, and declaration splices.
+
 - Reuse parsed expressions in nested list, record, and view patterns to avoid
   quadratic backtracking.
 - Limit retries for local function bindings to the binding head. Invalid
