@@ -19,6 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Accept `(@)` as a parenthesized operator variable in expressions. A tight
+  `@` lexes as a reserved token, and the parenthesized-operator parser rejected
+  it, so `(@)`, `(@) 1 2`, and `$(@)` failed to parse even though GHC accepts
+  them (rejecting `(@)` only later, in the renamer). The pretty-printer already
+  rendered such names as `(@)`, so they did not round-trip. Other reserved
+  operators (`->`, `=>`, `::`, `|`, `<-`, `=`, `..`) are still rejected.
+
 - Wrap `DeclPatSynSig`, `DeclDefault`, and `DeclSplice` in `DeclAnn` with a
   source span, like every other top-level declaration. Consumers that locate
   declarations by span (such as attaching `-- |` comments) can now handle

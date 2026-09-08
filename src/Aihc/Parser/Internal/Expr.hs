@@ -633,11 +633,17 @@ parenOperatorExprParser =
     EVar <$> parens operatorExprNameParser
 
 -- | Parse the operator inside a parenthesized operator expression such as
--- @(+)@, @(:)@, or @(-)@.
+-- @(+)@, @(:)@, or @(\@)@.
 --
--- Reserved operators such as @->@, @=>@, @::@, @|@, @<-@, @=@, @..@, and @\@@
--- are grammar, not names.  They have no term-level meaning, so this parser
--- rejects them, in the same way as GHC.
+-- Reserved operators such as @->@, @=>@, @::@, @|@, @<-@, @=@, and @..@ are
+-- grammar, not names.  They have no term-level meaning, so this parser rejects
+-- them, in the same way as GHC.
+--
+-- @\@@ is different: since the whitespace-sensitive @\@@ proposal, GHC's
+-- grammar admits @(\@)@ as an ordinary varsym, so @$(\@)@ and @(\@) 1 2@ parse
+-- and only fail later in the renamer.  A tight @\@@ lexes as 'TkReservedAt'
+-- (see 'Aihc.Parser.Lex.lexTypeApplication'), which is why it needs its own
+-- case here.
 operatorExprNameParser :: TokParser Name
 operatorExprNameParser =
   tokenSatisfy "operator" $ \tok ->
@@ -648,6 +654,7 @@ operatorExprNameParser =
       TkQConSym modName sym -> Just (mkNameAt tok (Just modName) NameConSym sym)
       TkMinusOperator -> Just (mkNameAt tok Nothing NameVarSym "-")
       TkReservedColon -> Just (mkNameAt tok Nothing NameConSym ":")
+      TkReservedAt -> Just (mkNameAt tok Nothing NameVarSym "@")
       _ -> Nothing
 
 rhsParser :: TokParser (Rhs Expr)
