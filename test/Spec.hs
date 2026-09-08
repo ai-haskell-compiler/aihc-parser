@@ -305,6 +305,10 @@ buildTests = do
             testCase "parenthesizes if RHS before following infix operators" test_ifInfixRhsBeforeFollowingInfixParens,
             testCase "parenthesizes infix RHS operands inside left sections" test_infixRhsInsideLeftSectionParens,
             testCase "pretty-prints reserved at right sections" test_prettyReservedAtRightSection,
+            testCase "pretty-prints reserved at operator variables" test_prettyReservedAtOperatorVariable,
+            testCase "parses applications of reserved at operator variables" test_reservedAtOperatorVariableApplication,
+            testCase "parses reserved at operator variables in pattern splices" test_reservedAtOperatorVariableInPatternSplice,
+            testCase "rejects reserved operators as parenthesized operator expressions" test_parenOperatorExprRejectsReservedOperators,
             testCase "pretty-prints type applications after layout-ending functions" test_prettyTypeAppAfterLayoutEndingFunction,
             testCase "pretty-prints type signatures after layout-ending functions" test_prettyTypeSigAfterLayoutEndingFunction,
             testCase "pretty-prints operators after layout-rendered do blocks" test_prettyOperatorAfterLayoutDoBlock,
@@ -1542,6 +1546,43 @@ test_prettyReservedAtRightSection = do
       rendered = renderStrict (layoutPretty defaultLayoutOptions (pretty expr))
   assertEqual "pretty-printed expression" "(@ ())" rendered
   assertExprRenderingRoundTrip defaultConfig expr rendered
+
+test_prettyReservedAtOperatorVariable :: Assertion
+test_prettyReservedAtOperatorVariable = do
+  let expr = EVar (qualifyName Nothing (mkUnqualifiedName NameVarSym "@"))
+      rendered = renderPretty expr
+  assertEqual "pretty-printed expression" "(@)" rendered
+  assertExprRenderingRoundTrip defaultConfig expr rendered
+
+test_reservedAtOperatorVariableApplication :: Assertion
+test_reservedAtOperatorVariableApplication =
+  assertParsedStrippedDeclShapeRoundTrip defaultConfig "f = (@) 1 2"
+
+test_reservedAtOperatorVariableInPatternSplice :: Assertion
+test_reservedAtOperatorVariableInPatternSplice = do
+  let config = defaultConfig {parserExtensions = requiredExtensions}
+      source =
+        """
+        _ = [[]
+         | let $(@) `a` _ = []]
+        """
+  assertParsedStrippedDeclShapeRoundTrip config source
+
+test_parenOperatorExprRejectsReservedOperators :: Assertion
+test_parenOperatorExprRejectsReservedOperators =
+  mapM_ assertRejected ["(->)", "(=>)", "(::)", "(|)", "(<-)", "(=)", "(..)"]
+  where
+    config = defaultConfig {parserExtensions = requiredExtensions}
+    assertRejected source =
+      case parseExpr config source of
+        ParseErr {} -> pure ()
+        ParseOk expr ->
+          assertFailure
+            ( "expected parse failure for "
+                <> T.unpack source
+                <> ", got: "
+                <> show (shorthand (stripAnnotations expr))
+            )
 
 test_prettyTypeAppAfterLayoutEndingFunction :: Assertion
 test_prettyTypeAppAfterLayoutEndingFunction = do
