@@ -1,0 +1,6 @@
+extensions: []
+input: |
+  let { x@(Just y) = value; f z = z; (a, b) = pair } in y
+ast: |-
+  ELetDecls [DeclValue (PatternBind (PAs UnqualifiedName {"x"} (PParen (PCon "Just" [PVar "y"]))) (EVar "value")), DeclValue (FunctionBind "f" [Match {MatchHeadPrefix, [PVar "z"], EVar "z"}]), DeclValue (PatternBind (PTuple [PVar "a", PVar "b"]) (EVar "pair"))] (EVar "y")
+status: pass

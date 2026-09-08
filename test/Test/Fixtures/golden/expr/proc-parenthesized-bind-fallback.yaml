@@ -1,0 +1,6 @@
+extensions: [Arrows]
+input: |
+  proc x -> do { (Just y) <- f -< x; (z@(Just w)) <- g -< y; ((returnA -< w)) }
+ast: |-
+  EProc (PVar "x") (CmdDo [DoBind (PParen (PCon "Just" [PVar "y"])) (CmdArrApp (EVar "f") HsFirstOrderApp (EVar "x")), DoBind (PParen (PAs UnqualifiedName {"z"} (PParen (PCon "Just" [PVar "w"])))) (CmdArrApp (EVar "g") HsFirstOrderApp (EVar "y")), DoExpr (CmdPar (CmdPar (CmdArrApp (EVar "returnA") HsFirstOrderApp (EVar "w"))))])
+status: pass

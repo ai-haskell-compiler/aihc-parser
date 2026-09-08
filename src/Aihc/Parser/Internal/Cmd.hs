@@ -154,7 +154,8 @@ cmdStmtParser = do
     TkKeywordIf -> cmdBodyStmtParser
     TkKeywordCase -> cmdBodyStmtParser
     TkReservedBackslash -> cmdBodyStmtParser
-    TkSpecialLParen -> MP.try cmdBindOrBodyStmtParser <|> MP.try cmdBindStmtParser <|> cmdBodyStmtParser
+    -- Try commands first so nested command parentheses are parsed once.
+    TkSpecialLParen -> MP.try cmdBodyStmtParser <|> MP.try cmdBindOrBodyStmtParser <|> cmdBindStmtParser
     _ -> do
       isPatternBind <- startsWithPatternBind
       if isPatternBind

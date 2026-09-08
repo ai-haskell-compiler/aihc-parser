@@ -1,0 +1,6 @@
+extensions: [BangPatterns, ViewPatterns]
+input: |
+  [K !x, K ~y, z@(Just w), id -> [a, b]]
+ast: |-
+  PList [PCon "K" [PStrict (PVar "x")], PCon "K" [PIrrefutable (PVar "y")], PAs UnqualifiedName {"z"} (PParen (PCon "Just" [PVar "w"])), PView (EVar "id") (PList [PVar "a", PVar "b"])]
+status: pass

@@ -43,29 +43,21 @@ timeoutMicros = 1000000
 generatedCaseSize :: Int
 generatedCaseSize = 200
 
--- | Depth for the remaining parenthesized-do case.
-xfailParenDoSize :: Int
-xfailParenDoSize = 32
-
--- | Depth for exponential invalid nested-let cases. n=20 already exceeds 1s.
-xfailMalformedLetSize :: Int
-xfailMalformedLetSize = 24
-
 -- | Depth for nested list-pattern cases. Keep the source below 10KiB.
-xfailListPatternSize :: Int
-xfailListPatternSize = 4000
+listPatternSize :: Int
+listPatternSize = 4000
 
 -- | Depth for nested record-pattern cases. Keep the source below 10KiB.
-xfailRecordPatternSize :: Int
-xfailRecordPatternSize = 2000
+recordPatternSize :: Int
+recordPatternSize = 2000
 
 -- | Depth for nested view-pattern cases. Keep the source below 10KiB.
-xfailViewPatternSize :: Int
-xfailViewPatternSize = 1200
+viewPatternSize :: Int
+viewPatternSize = 1200
 
 -- | Depth for nested proc-do command parentheses. Keep the source below 10KiB.
-xfailProcDoParenSize :: Int
-xfailProcDoParenSize = 2000
+procDoParenSize :: Int
+procDoParenSize = 2000
 
 parserPerformanceTests :: IO TestTree
 parserPerformanceTests = do
@@ -120,13 +112,14 @@ assertPerfCase perfCase = do
               }
             (perfCaseInput perfCase)
   case (perfCaseStatus perfCase, outcome) of
-    (StatusPass, Nothing) ->
-      assertFailure
-        ( "module parse exceeded "
-            <> show timeoutMicros
-            <> "us for "
-            <> perfCaseId perfCase
-        )
+    (status, Nothing)
+      | status /= StatusXFail ->
+          assertFailure
+            ( "module parse exceeded "
+                <> show timeoutMicros
+                <> "us for "
+                <> perfCaseId perfCase
+            )
     (StatusPass, Just (errs, _))
       | not (null errs) ->
           assertFailure
@@ -135,6 +128,8 @@ assertPerfCase perfCase = do
                 <> ", got parse error: "
                 <> formatParseErrors (perfCaseSourceName perfCase) (Just (perfCaseInput perfCase)) errs
             )
+    (StatusFail, Just (errs, _))
+      | null errs -> assertFailure ("expected parse failure for performance case " <> perfCaseId perfCase)
     (StatusXFail, Nothing) -> pure ()
     (StatusXFail, Just (errs, _))
       | null errs ->
@@ -199,6 +194,7 @@ parsePerfCaseText path source = do
     parseStatus fixturePath raw =
       case map toLower (T.unpack (T.strip raw)) of
         "pass" -> Right StatusPass
+        "fail" -> Right StatusFail
         "xfail" -> Right StatusXFail
         _ -> Left ("Invalid [status] in " <> fixturePath <> ": " <> T.unpack raw)
 
@@ -244,7 +240,7 @@ generatedPerfCases =
     mkGeneratedPerfCase "type-parameters" (mkTypeModule (typeWithParameters generatedCaseSize)),
     mkGeneratedPerfCase "string-escapes" (mkExprModule (escapedStringExpr (generatedCaseSize * 500))),
     mkGeneratedPerfCase "nested-application" (mkExprModule (nestedAppExpr generatedCaseSize)),
-    mkGeneratedPerfCaseWithStatus "xfail-invalid-module" "module Generated where\nvalue = { x = 1, }\n" StatusXFail "regression coverage",
+    mkGeneratedPerfCaseWithStatus "invalid-module" "module Generated where\nvalue = { x = 1, }\n" StatusFail "",
     -- Nested block expressions must not be parsed again as patterns.
     mkGeneratedPerfCase "nested-paren-do" (mkExprModule (nestedParenDoExpr generatedCaseSize)),
     mkGeneratedPerfCase "nested-paren-do-case" (mkExprModule (nestedParenDoCaseExpr generatedCaseSize)),
@@ -263,132 +259,154 @@ generatedPerfCases =
       (mkExprModule ("mdo { (" <> nestedParenDoExpr generatedCaseSize <> ") }"))
       StatusPass
       "",
-    mkGeneratedXFailCase
-      "xfail-nested-paren-do-proc"
-      xfailParenDoSize
+    mkGeneratedPerfCaseFull
+      "malformed-nested-proc-do-blocks"
+      generatedCaseSize
       [Arrows]
-      (mkProcModule (nestedParenDoExpr xfailParenDoSize))
-      "nested parenthesized do expressions in proc cause exponential backtracking",
-    mkGeneratedXFailCase
-      "xfail-malformed-nested-let"
-      xfailMalformedLetSize
+      (mkProcModule (nestedParenDoExpr generatedCaseSize))
+      StatusFail
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-proc-do-blocks"
+      generatedCaseSize
+      [Arrows]
+      (mkProcModule (nestedWrap "do { (" ") }" "returnA -< x" generatedCaseSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "malformed-nested-let"
+      generatedCaseSize
       []
-      (mkExprModule (malformedNestedLetExpr xfailMalformedLetSize))
-      "invalid nested let-in causes exponential backtracking",
-    -- Quadratic: nested list patterns try each inner list as an expression.
-    mkGeneratedXFailCase
-      "xfail-nested-list-pattern"
-      xfailListPatternSize
+      (mkExprModule (malformedNestedLetExpr generatedCaseSize))
+      StatusFail
+      "",
+    -- Nested patterns must reuse the expression parse.
+    mkGeneratedPerfCaseFull
+      "nested-list-pattern"
+      listPatternSize
       []
-      (mkTuplePatternFunctionModule (nestedListPattern xfailListPatternSize))
-      "nested list patterns cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-list-pattern-bind"
-      xfailListPatternSize
+      (mkTuplePatternFunctionModule (nestedListPattern listPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-list-pattern-bind"
+      listPatternSize
       []
-      (mkPatBindModule (nestedListPattern xfailListPatternSize))
-      "nested list pattern bindings cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-list-pattern-case"
-      xfailListPatternSize
+      (mkPatBindModule (nestedListPattern listPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-list-pattern-case"
+      listPatternSize
       []
-      (mkCaseModule (nestedListPattern xfailListPatternSize))
-      "nested list patterns in case cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-list-pattern-lambda"
-      xfailListPatternSize
+      (mkCaseModule (nestedListPattern listPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-list-pattern-lambda"
+      listPatternSize
       []
-      (mkLambdaModule (nestedListPattern xfailListPatternSize))
-      "nested list patterns in lambda cause quadratic view-pattern tries",
+      (mkLambdaModule (nestedListPattern listPatternSize))
+      StatusPass
+      "",
     mkGeneratedPerfCaseFull
       "nested-list-pattern-do"
-      xfailListPatternSize
+      listPatternSize
       []
-      (mkDoStmtModule (nestedListPattern xfailListPatternSize))
+      (mkDoStmtModule (nestedListPattern listPatternSize))
       StatusPass
       "",
     mkGeneratedPerfCaseFull
       "nested-list-pattern-guard"
-      xfailListPatternSize
+      listPatternSize
       []
-      (mkGuardModule (nestedListPattern xfailListPatternSize))
+      (mkGuardModule (nestedListPattern listPatternSize))
       StatusPass
       "",
     mkGeneratedPerfCaseFull
       "nested-list-pattern-comp"
-      xfailListPatternSize
+      listPatternSize
       []
-      (mkCompModule (nestedListPattern xfailListPatternSize))
+      (mkCompModule (nestedListPattern listPatternSize))
       StatusPass
       "",
-    mkGeneratedXFailCase
-      "xfail-nested-list-pattern-where"
-      xfailListPatternSize
+    mkGeneratedPerfCaseFull
+      "nested-list-pattern-where"
+      listPatternSize
       []
-      (mkWherePatModule (nestedListPattern xfailListPatternSize))
-      "nested list patterns in where cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-list-pattern-synonym"
-      xfailListPatternSize
+      (mkWherePatModule (nestedListPattern listPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-list-pattern-synonym"
+      listPatternSize
       [PatternSynonyms]
-      (mkPatSynModule (nestedListPattern xfailListPatternSize))
-      "nested list patterns in a pattern synonym cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-list-tuple-pattern"
-      xfailListPatternSize
+      (mkPatSynModule (nestedListPattern listPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-list-tuple-pattern"
+      listPatternSize
       []
-      (mkTuplePatternFunctionModule (nestedWrap "[" "]" "(x, y)" xfailListPatternSize))
-      "nested list-of-tuple patterns cause quadratic view-pattern tries",
-    -- Quadratic: nested record patterns try each inner record as an expression.
-    mkGeneratedXFailCase
-      "xfail-nested-record-pattern"
-      xfailRecordPatternSize
+      (mkTuplePatternFunctionModule (nestedWrap "[" "]" "(x, y)" listPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-record-pattern"
+      recordPatternSize
       []
-      (mkTuplePatternFunctionModule (nestedRecordPattern xfailRecordPatternSize))
-      "nested record patterns cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-record-pattern-bind"
-      xfailRecordPatternSize
+      (mkTuplePatternFunctionModule (nestedRecordPattern recordPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-record-pattern-bind"
+      recordPatternSize
       []
-      (mkPatBindModule (nestedRecordPattern xfailRecordPatternSize))
-      "nested record pattern bindings cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-record-pattern-case"
-      xfailRecordPatternSize
+      (mkPatBindModule (nestedRecordPattern recordPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-record-pattern-case"
+      recordPatternSize
       []
-      (mkCaseModule (nestedRecordPattern xfailRecordPatternSize))
-      "nested record patterns in case cause quadratic view-pattern tries",
-    mkGeneratedXFailCase
-      "xfail-nested-record-pattern-lambda"
-      xfailRecordPatternSize
+      (mkCaseModule (nestedRecordPattern recordPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-record-pattern-lambda"
+      recordPatternSize
       []
-      (mkLambdaModule (nestedRecordPattern xfailRecordPatternSize))
-      "nested record patterns in lambda cause quadratic view-pattern tries",
-    -- Quadratic: nested view patterns reparse each inner view as an expression.
-    mkGeneratedXFailCase
-      "xfail-nested-view-pattern"
-      xfailViewPatternSize
+      (mkLambdaModule (nestedRecordPattern recordPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-view-pattern"
+      viewPatternSize
       [ViewPatterns]
-      (mkTuplePatternFunctionModule (nestedViewPattern xfailViewPatternSize))
-      "nested view patterns cause quadratic backtracking",
-    mkGeneratedXFailCase
-      "xfail-nested-view-pattern-bind"
-      xfailViewPatternSize
+      (mkTuplePatternFunctionModule (nestedViewPattern viewPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-view-pattern-bind"
+      viewPatternSize
       [ViewPatterns]
-      (mkPatBindModule (nestedViewPattern xfailViewPatternSize))
-      "nested view pattern bindings cause quadratic backtracking",
-    mkGeneratedXFailCase
-      "xfail-nested-view-pattern-case"
-      xfailViewPatternSize
+      (mkPatBindModule (nestedViewPattern viewPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-view-pattern-case"
+      viewPatternSize
       [ViewPatterns]
-      (mkCaseModule (nestedViewPattern xfailViewPatternSize))
-      "nested view patterns in case cause quadratic backtracking",
-    mkGeneratedXFailCase
-      "xfail-nested-proc-do-parens"
-      xfailProcDoParenSize
+      (mkCaseModule (nestedViewPattern viewPatternSize))
+      StatusPass
+      "",
+    mkGeneratedPerfCaseFull
+      "nested-proc-do-parens"
+      procDoParenSize
       [Arrows]
-      (mkProcModule ("do { " <> nestedWrap "(" ")" "returnA -< x" xfailProcDoParenSize <> " }"))
-      "nested parenthesized commands in proc-do cause quadratic backtracking"
+      (mkProcModule ("do { " <> nestedWrap "(" ")" "returnA -< x" procDoParenSize <> " }"))
+      StatusPass
+      ""
   ]
 
 mkGeneratedPerfCase :: String -> Text -> PerfCase
@@ -398,10 +416,6 @@ mkGeneratedPerfCase label inputText =
 mkGeneratedPerfCaseWithStatus :: String -> Text -> ExpectedStatus -> String -> PerfCase
 mkGeneratedPerfCaseWithStatus label =
   mkGeneratedPerfCaseFull label generatedCaseSize []
-
-mkGeneratedXFailCase :: String -> Int -> [Extension] -> Text -> String -> PerfCase
-mkGeneratedXFailCase label size exts inputText =
-  mkGeneratedPerfCaseFull label size exts inputText StatusXFail
 
 mkGeneratedPerfCaseFull :: String -> Int -> [Extension] -> Text -> ExpectedStatus -> String -> PerfCase
 mkGeneratedPerfCaseFull label size exts inputText status reason =
