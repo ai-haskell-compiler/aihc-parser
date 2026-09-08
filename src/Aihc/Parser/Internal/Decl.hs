@@ -132,7 +132,7 @@ exprDeclEnabled = do
 -- constructs (e.g. @$expr@, @$(expr)@ via TH, @[qq|...|]@ via QuasiQuotes),
 -- so no special dispatch is needed here.
 exprDeclParser :: TokParser Decl
-exprDeclParser = DeclSplice <$> exprParser
+exprDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ DeclSplice <$> exprParser
 
 -- | Parse a @type@ declaration after the @type@ keyword has been consumed.
 -- Uses 'typeDeclHeadParser' to handle both prefix and infix type heads,
@@ -566,7 +566,7 @@ typeSigOrPatternTypeSigDeclParser =
       "typed pattern bindings with '=' require exactly one binder"
 
 defaultDeclParser :: TokParser Decl
-defaultDeclParser = do
+defaultDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
   expectedTok TkKeywordDefault
   DeclDefault <$> parens (typeParser `MP.sepEndBy` expectedTok TkSpecialComma)
 
@@ -1570,7 +1570,7 @@ patternSynonymParser = MP.try patternSynonymSigDeclParser <|> patternSynonymDecl
 
 -- | Parse a pattern synonym type signature: @pattern Name1, Name2 :: Type@
 patternSynonymSigDeclParser :: TokParser Decl
-patternSynonymSigDeclParser = do
+patternSynonymSigDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
   expectedTok TkKeywordPattern
   names <- patSynNameParser `MP.sepBy1` expectedTok TkSpecialComma
   expectedTok TkReservedDoubleColon
