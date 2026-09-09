@@ -661,10 +661,15 @@ applyImpliedExtensions extensions =
       newExtensions = foldr applyExtensionSetting extensions settings
    in if sort newExtensions == sort extensions then extensions else applyImpliedExtensions newExtensions
 
+-- | Apply 'LANGUAGE' settings left to right, the order GHC applies them in,
+-- so that a later setting overrides an earlier one. Implications are applied
+-- immediately after each enable, so a later explicit disable can override an
+-- implication instead of having it resurrected by a final implication pass.
 effectiveExtensions :: LanguageEdition -> [ExtensionSetting] -> [Extension]
-effectiveExtensions edition extensionSettings =
-  applyImpliedExtensions $
-    foldr applyExtensionSetting (languageEditionExtensions edition) extensionSettings
+effectiveExtensions edition = List.foldl' applyOne (languageEditionExtensions edition)
+  where
+    applyOne extensions setting@(EnableExtension _) = applyImpliedExtensions (applyExtensionSetting setting extensions)
+    applyOne extensions setting@(DisableExtension _) = applyExtensionSetting setting extensions
 
 -- | Source location metadata for parsed syntax.
 -- Example: the span covering @map@ in @map f xs@.
