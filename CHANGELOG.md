@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [3.0.1.0] - 2026-09-09
+
 ### Performance
 
 - Cut parser wall time by about 10%, allocations by about 4%, and peak heap by
@@ -42,6 +44,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   in `do` statements, guards, and list comprehensions. Parse expressions first
   and use the pattern parser when pattern-only syntax requires it. This also
   speeds up nested list expressions in these positions.
+
+- Apply `LANGUAGE` settings left to right, the order GHC applies them in, so
+  that a later setting overrides an earlier one. A later explicit disable of
+  an extension could previously be resurrected by an implication from an
+  earlier enable.
 
 ## [3.0.0.0] - 2026-09-06
 
