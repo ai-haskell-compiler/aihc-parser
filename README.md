@@ -104,6 +104,11 @@ which is what a downstream compiler pass actually does with a parse tree. One
 iteration takes roughly 130 ms, and the corpus is pinned by commit in
 `flake.lock`, so numbers stay comparable across machines and across days.
 
+The benchmark executable links against the threaded RTS, matching how AIHC
+itself is built, but defaults to `-N1`: this workload is sequential, and the
+parallel GC a larger `-N` turns on costs wall time and adds variance. `-rtsopts`
+is on, so `+RTS -N4 -RTS` is still available for a deliberate experiment.
+
 ```bash
 nix run .#bench-aihc-base -- --warmup 1 --iterations 5 --gc-stats +RTS -T -RTS
 ```
