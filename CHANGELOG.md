@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- Added an `NFData` instance for `Extension`.
+- Made the `NFData` instance for `Extension` explicit.
 
 ## [3.0.1.0] - 2026-09-09
 
