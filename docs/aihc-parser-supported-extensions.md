@@ -17,7 +17,7 @@
 | CApiFFI                   |   🟢    | 4/4           |
 | CPP                       |   🟢    | 8/8           |
 | ConstraintKinds           |   🟢    | 8/8           |
-| DataKinds                 |   🟢    | 65/65         |
+| DataKinds                 |   🟢    | 68/68         |
 | DefaultSignatures         |   🟢    | 4/4           |
 | DerivingStrategies        |   🟢    | 8/8           |
 | DerivingVia               |   🟢    | 7/7           |
@@ -51,7 +51,7 @@
 | LinearTypes               |   🟢    | 15/15         |
 | MagicHash                 |   🟢    | 24/24         |
 | MultiParamTypeClasses     |   🟢    | 24/24         |
-| MultiWayIf                |   🟢    | 21/21         |
+| MultiWayIf                |   🟢    | 22/22         |
 | MultilineStrings          |   🟢    | 6/6           |
 | NamedFieldPuns            |   🟢    | 6/6           |
 | NamedWildCards            |   🟢    | 5/5           |
@@ -63,7 +63,7 @@
 | OverloadedRecordDot       |   🟢    | 8/8           |
 | PackageImports            |   🟢    | 6/6           |
 | ParallelListComp          |   🟢    | 3/3           |
-| PartialTypeSignatures     |   🟢    | 21/21         |
+| PartialTypeSignatures     |   🟢    | 22/22         |
 | PatternGuards             |   🟢    | 9/9           |
 | PatternSynonyms           |   🟢    | 34/34         |
 | PolyKinds                 |   🟢    | 14/14         |
@@ -80,18 +80,18 @@
 | StandaloneDeriving        |   🟢    | 18/18         |
 | StandaloneKindSignatures  |   🟢    | 12/12         |
 | StarIsType                |   🟢    | 4/4           |
-| TemplateHaskell           |   🟢    | 68/68         |
+| TemplateHaskell           |   🟢    | 69/69         |
 | TemplateHaskellQuotes     |   🟢    | 14/14         |
 | TransformListComp         |   🟢    | 18/18         |
 | TupleSections             |   🟢    | 4/4           |
 | TypeAbstractions          |   🟢    | 5/5           |
-| TypeApplications          |   🟢    | 13/13         |
+| TypeApplications          |   🟢    | 14/14         |
 | TypeData                  |   🟢    | 1/1           |
 | TypeFamilies              |   🟢    | 61/61         |
 | TypeFamilyDependencies    |   🟢    | 4/4           |
 | TypeOperators             |   🟢    | 71/71         |
 | UnboxedSums               |   🟢    | 13/13         |
-| UnboxedTuples             |   🟢    | 22/22         |
+| UnboxedTuples             |   🟢    | 25/25         |
 | UnicodeSyntax             |   🟢    | 21/21         |
 | ViewPatterns              |   🟢    | 26/26         |
 
