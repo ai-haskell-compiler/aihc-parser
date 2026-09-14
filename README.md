@@ -101,8 +101,14 @@ For optimisation work, `just bench-aihc-base` (or `nix run .#bench-aihc-base`)
 is the short inner loop. It parses the 263 Haskell files of `core-libs/aihc-base`
 from the `aihc` repository and forces every resulting `Module` with `deepseq`,
 which is what a downstream compiler pass actually does with a parse tree. One
-iteration takes roughly 130 ms, and the corpus is pinned by commit in
+iteration takes roughly 160 ms, and the corpus is pinned by commit in
 `flake.lock`, so numbers stay comparable across machines and across days.
+
+Forcing runs in two phases, mirroring a compiler front end: first the module
+head and import list of *every* module, which is what a driver needs before it
+can order the batch, and only then the declarations and parse errors. Every
+parse tree therefore stays live for the whole iteration, so peak heap reflects
+holding the batch rather than one module at a time.
 
 The benchmark executable links against the threaded RTS, matching how AIHC
 itself is built, but defaults to `-N1`: this workload is sequential, and the

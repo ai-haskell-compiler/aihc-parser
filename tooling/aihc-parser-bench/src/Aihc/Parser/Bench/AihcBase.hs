@@ -7,6 +7,14 @@
 -- deliberately sized so that one iteration takes a fraction of a second,
 -- which makes it usable as an inner loop for optimisation work.
 --
+-- The forcing happens in two phases, mirroring how a compiler front end
+-- consumes a batch of modules.  The first phase forces the module head and
+-- the import list of /every/ module in the corpus, which is what a driver
+-- needs before it can build a dependency graph.  Only then does the second
+-- phase force the declarations and the parse errors.  Every parse tree is
+-- therefore live across the whole iteration, so peak heap reflects holding
+-- the batch rather than one module at a time.
+--
 -- None of the sources use CPP, so no preprocessor runs and the measured time
 -- is lexing plus parsing plus the cost of forcing the resulting tree.
 module Aihc.Parser.Bench.AihcBase
@@ -15,9 +23,15 @@ module Aihc.Parser.Bench.AihcBase
     findHaskellFiles,
     loadCorpus,
 
+    -- * Parsing and forcing
+    ParsedModule (..),
+    parseSourceFile,
+    forceModuleHeader,
+    forceModuleBody,
+    parseAndForce,
+
     -- * Running
     runAihcBaseBenchmark,
-    parseAndForce,
   )
 where
 
@@ -29,6 +43,10 @@ import Aihc.Parser.Bench.Benchmark
   )
 import Aihc.Parser.Bench.CLI (AihcBaseOptions (..))
 import Aihc.Parser.Bench.Parsers (prepareSourceAndExtensionsWithCpp)
+import Aihc.Parser.Syntax
+  ( Module (..),
+    SourceSpan,
+  )
 import Control.DeepSeq (NFData (..), force, rnf)
 import Control.Exception (evaluate)
 import Control.Monad (filterM, replicateM, unless)
@@ -92,13 +110,23 @@ loadCorpus root = do
             sourceFileBytes = BS.length bytes
           }
 
--- | Parse one file and force the resulting module with 'rnf'.
+-- | A parsed file, held live between the two forcing phases.
+data ParsedModule = ParsedModule
+  { parsedFileName :: !FilePath,
+    -- | Kept so that a failure can be reported with source context.
+    parsedSource :: Text,
+    parsedErrors :: [(SourceSpan, Text)],
+    parsedTree :: Module
+  }
+
+-- | Parse one file, without forcing anything beyond what producing the
+-- top-level result requires.
 --
--- Returns 'Nothing' on success, or the formatted parse errors on failure.
--- Extension resolution happens inside the timed section on purpose: scanning
--- the module header is part of what it costs to parse a file.
-parseAndForce :: SourceFile -> Maybe String
-parseAndForce file =
+-- Extension resolution is part of this on purpose: scanning the module header
+-- is part of what it costs to parse a file, so it belongs inside the timed
+-- section.
+parseSourceFile :: SourceFile -> ParsedModule
+parseSourceFile file =
   let (source, extensions) =
         prepareSourceAndExtensionsWithCpp
           True -- no CPP: aihc-base does not use it
@@ -115,10 +143,54 @@ parseAndForce file =
             Aihc.parserExtensions = extensions
           }
       (errs, m) = Aihc.parseModule config source
-   in rnf m `seq`
-        if null errs
-          then Nothing
-          else Just (Aihc.formatParseErrors (sourceFileName file) (Just source) errs)
+   in ParsedModule
+        { parsedFileName = sourceFileName file,
+          parsedSource = source,
+          parsedErrors = errs,
+          parsedTree = m
+        }
+
+-- | Phase one: the module head — its name and export list — and the import
+-- list.  This is what a driver needs from every module before it can order
+-- the batch.
+forceModuleHeader :: ParsedModule -> ()
+forceModuleHeader p =
+  rnf (moduleHead tree) `seq` rnf (moduleImports tree)
+  where
+    tree = parsedTree p
+
+-- | Phase two: everything the header phase left alone, plus the parse errors.
+forceModuleBody :: ParsedModule -> ()
+forceModuleBody p =
+  rnf (moduleAnns tree) `seq`
+    rnf (moduleLanguagePragmas tree) `seq`
+      rnf (moduleDecls tree) `seq`
+        rnf (parsedErrors p)
+  where
+    tree = parsedTree p
+
+-- | The formatted parse errors for a module, or 'Nothing' if it parsed.
+moduleFailure :: ParsedModule -> Maybe String
+moduleFailure p
+  | null (parsedErrors p) = Nothing
+  | otherwise =
+      Just
+        ( Aihc.formatParseErrors
+            (parsedFileName p)
+            (Just (parsedSource p))
+            (parsedErrors p)
+        )
+
+-- | Parse one file and force it completely, header phase first.
+--
+-- Returns 'Nothing' on success, or the formatted parse errors on failure.
+-- This is the single-module equivalent of what an iteration does across the
+-- whole corpus; the benchmark itself interleaves the phases differently.
+parseAndForce :: SourceFile -> Maybe String
+parseAndForce file =
+  forceModuleHeader parsed `seq` forceModuleBody parsed `seq` moduleFailure parsed
+  where
+    parsed = parseSourceFile file
 
 -- | Load the corpus, then time repeated parse-and-force passes over it.
 runAihcBaseBenchmark :: AihcBaseOptions -> IO (BenchmarkResult, [(FilePath, String)])
@@ -176,14 +248,19 @@ runAihcBaseBenchmark opts = do
           ++ "ms"
       pure result
 
--- | One timed pass: parse every file and force every tree.
+-- | One timed pass over the corpus.
+--
+-- Phase one forces the head and imports of every module before phase two
+-- touches any declaration, so the whole batch of parse trees stays reachable
+-- until the iteration ends.
 runIteration :: [SourceFile] -> IO IterationResult
 runIteration corpus = do
   start <- getMonotonicTimeNSec
-  let results = map parseAndForce corpus
-  _ <- evaluate (rnf results)
+  let parsed = map parseSourceFile corpus
+  _ <- evaluate (forceAll forceModuleHeader parsed)
+  _ <- evaluate (forceAll forceModuleBody parsed)
   end <- getMonotonicTimeNSec
-  let failed = length [() | Just _ <- results]
+  let failed = length [() | p <- parsed, not (null (parsedErrors p))]
   pure
     IterationResult
       { iterWallTimeNs = fromIntegral (end - start),
@@ -192,6 +269,10 @@ runIteration corpus = do
         iterParseSuccess = length corpus - failed,
         iterParseFailed = failed
       }
+
+-- | Apply a forcing function to every element, forcing the list spine too.
+forceAll :: (a -> ()) -> [a] -> ()
+forceAll f = foldr (\x rest -> f x `seq` rest) ()
 
 captureGCStatsIf :: Bool -> IO (Maybe GCStatsSnapshot)
 captureGCStatsIf False = pure Nothing

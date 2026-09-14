@@ -4,11 +4,16 @@ module Test.AihcBaseBench
 where
 
 import Aihc.Parser.Bench.AihcBase
-  ( SourceFile (..),
+  ( ParsedModule (..),
+    SourceFile (..),
     findHaskellFiles,
+    forceModuleBody,
+    forceModuleHeader,
     loadCorpus,
     parseAndForce,
+    parseSourceFile,
   )
+import Aihc.Parser.Syntax (ImportDecl (..), Module (..), ModuleHead (..))
 import Control.Exception (bracket)
 import Data.List (isInfixOf)
 import Data.Text qualified as T
@@ -43,7 +48,35 @@ aihcBaseBenchTests =
         assertEqual "no errors" Nothing (parseAndForce (sourceFile "Top.hs" topModule)),
       testCase "reports the failing file when a source does not parse" $ do
         let result = parseAndForce (sourceFile "Broken.hs" "module Broken where\nx = (\n")
-        assertBool "names the file" (maybe False ("Broken.hs" `isInfixOf`) result)
+        assertBool "names the file" (maybe False ("Broken.hs" `isInfixOf`) result),
+      testCase "the header phase covers the module name and the imports" $ do
+        let parsed = parseSourceFile (sourceFile "Importer.hs" importerModule)
+            tree = parsedTree parsed
+        forceModuleHeader parsed `seq` pure ()
+        assertEqual "module name" (Just (T.pack "Importer")) (moduleHeadName <$> moduleHead tree)
+        assertEqual
+          "imported modules"
+          (map T.pack ["Data.List", "Data.Maybe"])
+          (map importDeclModule (moduleImports tree)),
+      testCase "the body phase covers the declarations" $ do
+        let parsed = parseSourceFile (sourceFile "Importer.hs" importerModule)
+        forceModuleHeader parsed `seq` forceModuleBody parsed `seq` pure ()
+        assertEqual "no parse errors" [] (parsedErrors parsed)
+        assertEqual "declaration count" 2 (length (moduleDecls (parsedTree parsed)))
+    ]
+
+-- | Has both an import list and declarations, so the two phases can be told
+-- apart by what each one reaches.
+importerModule :: String
+importerModule =
+  unlines
+    [ "module Importer (sorted) where",
+      "",
+      "import Data.List (sort)",
+      "import Data.Maybe qualified as M",
+      "",
+      "sorted :: [Int] -> [Int]",
+      "sorted = sort"
     ]
 
 -- | A module that only parses because the corpus is treated as GHC2021 --
