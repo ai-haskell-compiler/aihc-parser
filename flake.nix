@@ -3,7 +3,20 @@
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
-  outputs = {nixpkgs, ...}: let
+  # Fixed corpus for the `bench-aihc-base` benchmark.  Pinned by commit here
+  # and by narHash in flake.lock, so the benchmark measures the same 263 files
+  # on every machine and every day.  Bump it deliberately, never casually: a
+  # corpus change makes new numbers incomparable with old ones.
+  inputs.aihc = {
+    url = "github:ai-haskell-compiler/aihc/d2945515818982c5512e8d2e209a8b3b0d7b05bb";
+    flake = false;
+  };
+
+  outputs = {
+    nixpkgs,
+    aihc,
+    ...
+  }: let
     systems = [
       "x86_64-linux"
       "aarch64-linux"
@@ -170,6 +183,18 @@
           '';
         }}/bin/generate-reports";
         meta.description = "Regenerate the README status table and the extension support docs";
+      };
+
+      bench-aihc-base = {
+        type = "app";
+        program = "${pkgs.writeShellApplication {
+          name = "bench-aihc-base";
+          text = ''
+            set -euo pipefail
+            exec ${benchExe} aihc-base --source ${aihc}/core-libs/aihc-base "$@"
+          '';
+        }}/bin/bench-aihc-base";
+        meta.description = "Parse aihc-base at a pinned commit and force every module with deepseq";
       };
 
       generate-benchmarks = {

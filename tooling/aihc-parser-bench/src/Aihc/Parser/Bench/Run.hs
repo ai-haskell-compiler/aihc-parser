@@ -4,9 +4,11 @@ module Aihc.Parser.Bench.Run
   )
 where
 
+import Aihc.Parser.Bench.AihcBase (runAihcBaseBenchmark)
 import Aihc.Parser.Bench.Benchmark (runBenchmark)
 import Aihc.Parser.Bench.CLI
-  ( BenchOptions (..),
+  ( AihcBaseOptions (..),
+    BenchOptions (..),
     Command (..),
     CoverageOptions (..),
     GenerateOptions (..),
@@ -14,7 +16,18 @@ import Aihc.Parser.Bench.CLI
     OutputFormat (..),
   )
 import Aihc.Parser.Bench.Coverage (formatCoverageSummary, measureCoverage)
-import Aihc.Parser.Bench.Metrics (computeMetrics, formatBytes, formatCsv, formatCsvHeader, formatHuman, formatJson)
+import Aihc.Parser.Bench.Metrics
+  ( computeMetrics,
+    computeMetricsOf,
+    formatBytes,
+    formatCsv,
+    formatCsvHeader,
+    formatCsvLabelled,
+    formatHuman,
+    formatHumanLabelled,
+    formatJson,
+    formatJsonLabelled,
+  )
 import Aihc.Parser.Bench.Report (runParserMeasurement, runReport)
 import Aihc.Parser.Bench.Tarball (FilterReason (..), GenerateResult (..), PackageSpec (..), formatPackage, generateTarball)
 import Control.Monad (when)
@@ -30,6 +43,7 @@ run opts =
     CmdReport reportOpts -> runReport reportOpts
     CmdMeasure measureOpts -> runParserMeasurement measureOpts
     CmdCoverage coverageOpts -> runCoverage coverageOpts
+    CmdAihcBase aihcBaseOpts -> runAihcBase aihcBaseOpts
 
 -- | Run the coverage command.
 runCoverage :: CoverageOptions -> IO ()
@@ -94,6 +108,26 @@ reasonToString (FilterGhcFailed path _) = "ghc-lib-parser failed: " ++ path
 reasonToString FilterNoHaskellFiles = "no Haskell files"
 reasonToString (FilterDownloadFailed err) = "download failed: " ++ err
 reasonToString (FilterCabalParseFailed err) = "cabal file parse failed: " ++ err
+
+-- | Run the aihc-base command.
+runAihcBase :: AihcBaseOptions -> IO ()
+runAihcBase opts = do
+  (result, failures) <- runAihcBaseBenchmark opts
+  let metrics = computeMetricsOf result
+
+  case aihcBaseOutput opts of
+    FormatHuman -> putStrLn (formatHumanLabelled "aihc, aihc-base corpus, deepseq" metrics)
+    FormatJson -> LBS8.putStrLn (formatJsonLabelled "aihc" False metrics)
+    FormatCsv -> do
+      putStrLn formatCsvHeader
+      putStrLn (formatCsvLabelled "aihc" False metrics)
+
+  if null failures
+    then exitSuccess
+    else do
+      hPutStrLn stderr $ show (length failures) ++ " file(s) failed to parse:"
+      mapM_ (\(path, err) -> hPutStrLn stderr ("  " ++ path ++ ": " ++ err)) failures
+      exitFailure
 
 -- | Run the bench command.
 runBench :: BenchOptions -> IO ()

@@ -29,6 +29,10 @@ progress-strict:
 benchmarks:
   nix run .#generate-benchmarks
 
+# Short-loop parser benchmark over a pinned checkout of aihc-base.
+bench-aihc-base *ARGS:
+  nix run .#bench-aihc-base -- --warmup 1 --iterations 5 --gc-stats {{ARGS}} +RTS -T -RTS
+
 stackage-coverage:
   nix run .#stackage-coverage
 

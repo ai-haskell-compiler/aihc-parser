@@ -1,5 +1,6 @@
 module Main (main) where
 
+import Test.AihcBaseBench (aihcBaseBenchTests)
 import Test.ParserBenchCoverage (parserBenchCoverageTests)
 import Test.ParserBenchPipeline (parserBenchPipelineTests)
 import Test.ParserBenchReport (parserBenchReportTests)
@@ -12,6 +13,7 @@ main =
     testGroup
       "aihc-parser-bench"
       [ parserBenchReportTests,
+        aihcBaseBenchTests,
         parserBenchCoverageTests,
         parserBenchPipelineTests,
         -- Present so that the suite accepts the --quickcheck-* flags that

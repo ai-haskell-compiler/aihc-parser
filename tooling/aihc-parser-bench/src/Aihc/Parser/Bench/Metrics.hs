@@ -7,13 +7,17 @@ module Aihc.Parser.Bench.Metrics
 
     -- * Computation
     computeMetrics,
+    computeMetricsOf,
     computeGCMetrics,
     GCMetrics (..),
 
     -- * Formatting
     formatHuman,
+    formatHumanLabelled,
     formatJson,
+    formatJsonLabelled,
     formatCsv,
+    formatCsvLabelled,
     formatCsvHeader,
     formatBytes,
   )
@@ -69,7 +73,13 @@ data GCMetrics = GCMetrics
 
 -- | Compute metrics from benchmark results.
 computeMetrics :: BenchOptions -> BenchmarkResult -> Metrics
-computeMetrics _opts result =
+computeMetrics _opts = computeMetricsOf
+
+-- | Compute metrics from benchmark results, without reference to the
+-- command-line options.  Used by benchmarks that do not go through the
+-- Stackage tarball pipeline.
+computeMetricsOf :: BenchmarkResult -> Metrics
+computeMetricsOf result =
   let iterations = benchMainResults result
       -- Use median timing for stability
       times = sort (map iterWallTimeNs iterations)
@@ -125,10 +135,19 @@ computeGCMetrics _ _ = Nothing
 
 -- | Format metrics for human-readable output.
 formatHuman :: BenchOptions -> Metrics -> String
-formatHuman opts m =
+formatHuman opts = formatHumanLabelled (parserName (benchParser opts) ++ modeStr)
+  where
+    modeStr =
+      if benchLexerOnly opts && benchParser opts == ParserAihc
+        then ", lexer-only"
+        else ""
+
+-- | Format metrics for human-readable output under a caller-supplied label.
+formatHumanLabelled :: String -> Metrics -> String
+formatHumanLabelled label m =
   unlines $
     [ "",
-      "Benchmark Results (" ++ parserName (benchParser opts) ++ modeStr ++ ")",
+      "Benchmark Results (" ++ label ++ ")",
       replicate 50 '=',
       "",
       "Input:",
@@ -146,11 +165,6 @@ formatHuman opts m =
       "  Success rate:     " ++ printf "%.1f%%" (metricsSuccessRate m)
     ]
       ++ maybe [] formatGCHuman (metricsGC m)
-  where
-    modeStr =
-      if benchLexerOnly opts && benchParser opts == ParserAihc
-        then ", lexer-only"
-        else ""
 
 formatGCHuman :: GCMetrics -> [String]
 formatGCHuman gc =
@@ -166,11 +180,18 @@ formatGCHuman gc =
 
 -- | Format metrics as JSON.
 formatJson :: BenchOptions -> Metrics -> LBS.ByteString
-formatJson opts m =
+formatJson opts =
+  formatJsonLabelled
+    (parserName (benchParser opts))
+    (benchLexerOnly opts && benchParser opts == ParserAihc)
+
+-- | Format metrics as JSON under a caller-supplied parser label.
+formatJsonLabelled :: String -> Bool -> Metrics -> LBS.ByteString
+formatJsonLabelled label lexerOnly m =
   Aeson.encode $
     Aeson.object $
-      [ "parser" .= parserName (benchParser opts),
-        "lexer_only" .= (benchLexerOnly opts && benchParser opts == ParserAihc),
+      [ "parser" .= label,
+        "lexer_only" .= lexerOnly,
         "total_files" .= metricsTotalFiles m,
         "total_bytes" .= metricsTotalBytes m,
         "wall_time_ms" .= metricsWallTimeMs m,
@@ -198,11 +219,18 @@ formatCsvHeader =
 
 -- | Format metrics as a CSV row.
 formatCsv :: BenchOptions -> Metrics -> String
-formatCsv opts m =
+formatCsv opts =
+  formatCsvLabelled
+    (parserName (benchParser opts))
+    (benchLexerOnly opts && benchParser opts == ParserAihc)
+
+-- | Format metrics as a CSV row under a caller-supplied parser label.
+formatCsvLabelled :: String -> Bool -> Metrics -> String
+formatCsvLabelled label lexerOnly m =
   intercalate
     ","
-    [ parserName (benchParser opts),
-      if benchLexerOnly opts && benchParser opts == ParserAihc then "true" else "false",
+    [ label,
+      if lexerOnly then "true" else "false",
       show (metricsTotalFiles m),
       show (metricsTotalBytes m),
       printf "%.2f" (metricsWallTimeMs m),

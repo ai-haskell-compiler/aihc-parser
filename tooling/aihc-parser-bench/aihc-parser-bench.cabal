@@ -11,6 +11,7 @@ synopsis: Relative Stackage benchmarks for aihc-parser and aihc-cpp
 
 library
   exposed-modules:
+    Aihc.Parser.Bench.AihcBase
     Aihc.Parser.Bench.Benchmark
     Aihc.Parser.Bench.CLI
     Aihc.Parser.Bench.Coverage
@@ -72,6 +73,7 @@ test-suite spec
   main-is: Spec.hs
   hs-source-dirs: test
   other-modules:
+    Test.AihcBaseBench
     Test.ParserBenchCoverage
     Test.ParserBenchPipeline
     Test.ParserBenchReport

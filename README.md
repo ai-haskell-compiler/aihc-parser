@@ -96,3 +96,19 @@ a fraction of the baseline's, so lower is better.
 Run `just benchmarks` (or `nix run .#generate-benchmarks`) to measure again and
 write a new `BENCHMARKS.md`. The tool downloads the snapshot packages, so the
 first run takes a long time.
+
+For optimisation work, `just bench-aihc-base` (or `nix run .#bench-aihc-base`)
+is the short inner loop. It parses the 263 Haskell files of `core-libs/aihc-base`
+from the `aihc` repository and forces every resulting `Module` with `deepseq`,
+which is what a downstream compiler pass actually does with a parse tree. One
+iteration takes roughly 130 ms, and the corpus is pinned by commit in
+`flake.lock`, so numbers stay comparable across machines and across days.
+
+```bash
+nix run .#bench-aihc-base -- --warmup 1 --iterations 5 --gc-stats +RTS -T -RTS
+```
+
+`Allocated` and `Max live` from `--gc-stats` are byte-identical between runs of
+the same binary, so they are the better primary signal; treat wall time as
+confirmation. Bumping the pinned commit in `flake.nix` changes the corpus and
+makes new numbers incomparable with old ones.
