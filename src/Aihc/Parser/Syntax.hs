@@ -337,7 +337,10 @@ data Extension
   | UnsafeHaskell
   | ViewPatterns
   | XmlSyntax
-  deriving (Data, Eq, Ord, Show, Read, Enum, Bounded, Generic, NFData)
+  deriving (Data, Eq, Ord, Show, Read, Enum, Bounded, Generic)
+
+instance NFData Extension where
+  rnf ext = ext `seq` ()
 
 data ExtensionSet = ExtensionSet !Word64 !Word64 !Word64
   deriving stock (Eq, Show, Generic)
