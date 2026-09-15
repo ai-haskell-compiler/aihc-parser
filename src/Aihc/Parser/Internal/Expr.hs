@@ -21,7 +21,7 @@ import Aihc.Parser.Internal.Pattern (apatParser, caseAltPatternParser, patParser
 import Aihc.Parser.Internal.Type (typeAtomParser, typeParser, typeSignatureParser)
 import Aihc.Parser.Lex (LexToken (..), LexTokenKind (..), lexTokenKind, lexTokenSpan, lexTokenText)
 import Aihc.Parser.Syntax
-import Aihc.Parser.Types (ParserErrorComponent (..), TokStream (..), mkFoundToken)
+import Aihc.Parser.Types (ParserErrorComponent (..), mkFoundToken)
 import Control.Monad (guard)
 import Data.Functor (($>))
 import Data.Text (Text)
@@ -381,16 +381,19 @@ appExprParser = appExprParserWith atomOrRecordExprParser
 -- variants.  The caller chooses the @aexp@-like atom parser.
 appExprParserWith :: TokParser Expr -> TokParser Expr
 appExprParserWith atomParser = do
-  startInput <- MP.getInput
+  startState <- MP.getParserState
+  let !startInput = MP.stateInput startState
+      !startOffset = MP.stateOffset startState
+      !inputStart = MP.pstateSourcePos (MP.statePosState startState)
   first <- atomParser
   rest <- MP.many appArg
   case rest of
     [] -> pure first
     _ -> do
-      endInput <- MP.getInput
-      let startSpan = inputStartSpan startInput
-          endSpan = maybe noSourceSpan lexTokenSpan (tokStreamPrevToken endInput)
-          appSpan = mergeSourceSpans startSpan endSpan
+      endState <- MP.getParserState
+      let !endInput = MP.stateInput endState
+          !endOffset = MP.stateOffset endState
+          appSpan = consumedSpan inputStart startInput startOffset endInput endOffset
       pure (EAnn (mkAnnotation appSpan) (foldl applyArg first rest))
   where
     appArg :: TokParser (Either Type Expr)

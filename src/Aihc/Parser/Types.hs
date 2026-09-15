@@ -17,6 +17,8 @@ module Aihc.Parser.Types
     mkFoundToken,
     ParseErrorBundle,
     ParseResult (..),
+    rebuildStream,
+    sourcePosSpan,
     ParserConfig (..),
   )
 where
@@ -33,7 +35,7 @@ import Aihc.Parser.Lex
     readModuleHeaderExtensions,
     scanAllTokens,
   )
-import Aihc.Parser.Syntax (Extension, ExtensionSet, SourceSpan, applyExtensionSetting, applyImpliedExtensions, mkExtensionSet)
+import Aihc.Parser.Syntax (Extension, ExtensionSet, SourceSpan (..), applyExtensionSetting, applyImpliedExtensions, mkExtensionSet)
 import Control.DeepSeq (NFData (..))
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -300,6 +302,31 @@ stepOne ts
            in Just (tok, next)
         [] ->
           Nothing
+
+-- | Build a stream a second time, for locating errors after a parse.
+--
+-- Error rendering walks a stream from offset 0. Reusing the stream that was
+-- parsed would keep its memoized successor chain alive for the whole parse,
+-- which 'runTokStreamParser' is careful to avoid. This function is not
+-- inlined so that GHC cannot share the rebuilt stream with the parsed one by
+-- common-subexpression elimination.
+rebuildStream :: (a -> TokStream) -> a -> TokStream
+rebuildStream build = build
+{-# NOINLINE rebuildStream #-}
+
+-- | The zero-width span at a Megaparsec source position, such as the initial
+-- position of a parse. Used when a stream has no token to locate something at.
+sourcePosSpan :: MP.SourcePos -> SourceSpan
+sourcePosSpan pos =
+  SourceSpan
+    { sourceSpanSourceName = T.pack (MP.sourceName pos),
+      sourceSpanStartLine = MP.unPos (MP.sourceLine pos),
+      sourceSpanStartCol = MP.unPos (MP.sourceColumn pos),
+      sourceSpanEndLine = MP.unPos (MP.sourceLine pos),
+      sourceSpanEndCol = MP.unPos (MP.sourceColumn pos),
+      sourceSpanStartOffset = 0,
+      sourceSpanEndOffset = 0
+    }
 
 -- | Run a token parser from the start of a stream.
 --

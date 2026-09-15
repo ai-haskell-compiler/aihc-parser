@@ -37,7 +37,7 @@ import Aihc.Parser.Types
 runParserFromTokens :: TokParser a -> FilePath -> [LexToken] -> ParseResult a
 runParserFromTokens parser sourceName toks =
   case runTokStreamParser parser sourceName (mkTokStreamFromTokens toks) of
-    Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
+    Left bundle -> ParseErr (parseErrorBundleToSpannedText sourceName (rebuildStream mkTokStreamFromTokens toks) bundle)
     Right parsed -> ParseOk parsed
 
 parseFromTokens :: TokParser a -> FilePath -> [LexToken] -> ParseResult a

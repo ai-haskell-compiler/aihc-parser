@@ -13,17 +13,16 @@ where
 import Aihc.Parser.Internal.Common
   ( TokParser,
     closeAndExpectRBrace,
+    consumedSpan,
     eofTok,
     expectedTok,
-    inputStartSpan,
     lazy,
     skipSemicolons,
   )
 import Aihc.Parser.Internal.Decl (declParser)
 import Aihc.Parser.Internal.Import (importDeclParser, languagePragmaParser, moduleHeaderParser)
-import Aihc.Parser.Lex (LexToken (lexTokenSpan), LexTokenKind (..), lexTokenKind)
-import Aihc.Parser.Syntax (Decl, ImportDecl, Module (..), mergeSourceSpans, mkAnnotation, noSourceSpan)
-import Aihc.Parser.Types (TokStream (tokStreamPrevToken))
+import Aihc.Parser.Lex (LexTokenKind (..), lexTokenKind)
+import Aihc.Parser.Syntax (Decl, ImportDecl, Module (..), mkAnnotation)
 import Control.Monad (void)
 import Text.Megaparsec qualified as MP
 
@@ -36,7 +35,10 @@ data RecoverParseStep a
 -- the whole-module span suspended until the corresponding result is demanded.
 moduleParser :: TokParser Module
 moduleParser = do
-  startInput <- MP.getInput
+  startState <- MP.getParserState
+  let !startInput = MP.stateInput startState
+      !startOffset = MP.stateOffset startState
+      !inputStart = MP.pstateSourcePos (MP.statePosState startState)
   languagePragmas <- MP.many (languagePragmaParser <* MP.many (expectedTok TkSpecialSemicolon))
   mHeader <- MP.optional (moduleHeaderParser <* MP.many (expectedTok TkSpecialSemicolon))
   expectedTok TkSpecialLBrace
@@ -49,8 +51,7 @@ moduleParser = do
           <* MP.lookAhead eofTok
       )
   MP.updateParserState (\state -> state {MP.stateParseErrors = MP.stateParseErrors finalState})
-  let endSpan = maybe noSourceSpan lexTokenSpan (tokStreamPrevToken (MP.stateInput finalState))
-      moduleSpan = mergeSourceSpans (inputStartSpan startInput) endSpan
+  let moduleSpan = consumedSpan inputStart startInput startOffset (MP.stateInput finalState) (MP.stateOffset finalState)
   pure
     Module
       { moduleAnns = [mkAnnotation moduleSpan],
