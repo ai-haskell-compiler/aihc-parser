@@ -342,14 +342,14 @@ parseControlPragma input = do
                 _ -> Just ("{-#" <> body <> "#-}", Left "malformed COLUMN pragma")
     _ -> Nothing
 
-parseDirectiveSourceName :: Text -> Maybe FilePath
+parseDirectiveSourceName :: Text -> Maybe Text
 parseDirectiveSourceName rest =
   let rest' = T.dropWhile isSpace rest
    in case rest' of
         '"' :< more ->
           let (name, trailing) = T.break (== '"') more
            in case trailing of
-                '"' :< _ -> Just (T.unpack name)
+                '"' :< _ -> Just name
                 _ -> Nothing
         _ -> Nothing
 

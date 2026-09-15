@@ -733,7 +733,7 @@ test_indentedHashLineIsOperator =
       ] -> pure ()
     other -> assertFailure ("expected indented '# line' to lex as operator + identifier, got: " <> show other)
 
-assertSourceSpan :: FilePath -> Int -> Int -> Int -> Int -> Int -> Int -> SourceSpan -> Assertion
+assertSourceSpan :: Text -> Int -> Int -> Int -> Int -> Int -> Int -> SourceSpan -> Assertion
 assertSourceSpan expectedName expectedStartLine expectedStartCol expectedEndLine expectedEndCol expectedStartOffset expectedEndOffset span' =
   case span' of
     SourceSpan {sourceSpanSourceName, sourceSpanStartLine, sourceSpanStartCol, sourceSpanEndLine, sourceSpanEndCol, sourceSpanStartOffset, sourceSpanEndOffset} -> do
@@ -746,7 +746,7 @@ assertSourceSpan expectedName expectedStartLine expectedStartCol expectedEndLine
       assertEqual "end offset" expectedEndOffset sourceSpanEndOffset
     NoSourceSpan -> assertFailure "expected SourceSpan, got NoSourceSpan"
 
-assertUnqualifiedNameSpan :: String -> FilePath -> Int -> Int -> Int -> Int -> Int -> Int -> UnqualifiedName -> Assertion
+assertUnqualifiedNameSpan :: String -> Text -> Int -> Int -> Int -> Int -> Int -> Int -> UnqualifiedName -> Assertion
 assertUnqualifiedNameSpan label expectedName expectedStartLine expectedStartCol expectedEndLine expectedEndCol expectedStartOffset expectedEndOffset name =
   case mapMaybe (fromAnnotation :: Annotation -> Maybe SourceSpan) (unqualifiedNameAnns name) of
     span' : _ -> assertSourceSpan expectedName expectedStartLine expectedStartCol expectedEndLine expectedEndCol expectedStartOffset expectedEndOffset span'

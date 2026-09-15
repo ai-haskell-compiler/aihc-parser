@@ -103,7 +103,7 @@ is the short inner loop. Each iteration scans `core-libs/aihc-base` from the
 forces every resulting `Module` with `deepseq`, which is what a downstream
 compiler pass actually does with a parse tree. The file IO is inside the
 measured time, as it would be for a real build. One iteration takes roughly
-190 ms, and the corpus is pinned by commit in `flake.lock`, so numbers stay
+165 ms, and the corpus is pinned by commit in `flake.lock`, so numbers stay
 comparable across machines and across days.
 
 Forcing runs in two phases, mirroring a compiler front end: first the module
