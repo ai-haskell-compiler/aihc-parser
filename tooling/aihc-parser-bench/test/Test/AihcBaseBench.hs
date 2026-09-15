@@ -20,9 +20,10 @@ import Data.Text qualified as T
 import System.Directory
   ( createDirectoryIfMissing,
     getTemporaryDirectory,
+    makeAbsolute,
     removeDirectoryRecursive,
   )
-import System.FilePath ((</>))
+import System.FilePath (isAbsolute, (</>))
 import Test.Tasty (TestTree, testGroup)
 import Test.Tasty.HUnit (assertBool, assertEqual, testCase)
 
@@ -37,12 +38,14 @@ aihcBaseBenchTests =
             "corpus files"
             [root </> "Nested" </> "Deep.hs", root </> "Top.hs"]
             files,
-      testCase "loads each file with a corpus-relative name" $
+      testCase "loads each file under its absolute path" $
         withCorpus $ \root -> do
+          absoluteRoot <- makeAbsolute root
           corpus <- loadCorpus root
+          assertBool "all absolute" (all (isAbsolute . sourceFileName) corpus)
           assertEqual
-            "relative names"
-            ["Nested/Deep.hs", "Top.hs"]
+            "absolute names"
+            [absoluteRoot </> "Nested" </> "Deep.hs", absoluteRoot </> "Top.hs"]
             (map sourceFileName corpus),
       testCase "parses GHC2021 sources that need no per-file pragma" $
         assertEqual "no errors" Nothing (parseAndForce (sourceFile "Top.hs" topModule)),
