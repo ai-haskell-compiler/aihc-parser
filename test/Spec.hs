@@ -261,6 +261,7 @@ buildTests = do
             testCase "shrunk standalone kind signatures shrink binder kinds" test_shrunkStandaloneKindSignaturesShrinkBinderKinds,
             testCase "shrunk module headers without warnings make progress" test_shrunkModuleHeaderWithoutWarningMakesProgress,
             testCase "syntax utility functions cover public edge cases" test_syntaxUtilityFunctions,
+            testCase "parse errors without a token are located at the parser offset" test_parseErrorOffsetSpan,
             testCase "shrunk class default pattern binds make progress" test_shrunkClassDefaultPatternBindMakesProgress,
             testCase "parsed binders carry source spans" test_parsedBindersCarrySourceSpans,
             testCase "every top-level declaration carries a source span" test_everyTopLevelDeclarationCarriesSourceSpan,
@@ -753,6 +754,16 @@ assertReadRoundTrip :: (Eq a, Read a, Show a) => String -> [a] -> Assertion
 assertReadRoundTrip label =
   mapM_ $ \value ->
     assertEqual (label <> ": " <> show value) (Just value) (readMaybe (show value))
+
+-- A `fail` inside the parser raises an error that names no token. Its span
+-- is recovered from the error offset: the token the parser stood on.
+test_parseErrorOffsetSpan :: Assertion
+test_parseErrorOffsetSpan =
+  case parseModule defaultConfig "{-# LANGUAGE TransformListComp #-}\nx = [y | y <- ys, then group z]" of
+    ([(span', message)], _) -> do
+      assertEqual "message" "expected 'by' or 'using' after 'group'" message
+      assertSourceSpan "<input>" 2 30 2 31 64 65 span'
+    (errs, _) -> assertFailure ("expected exactly one parse error, got: " <> show errs)
 
 test_syntaxUtilityFunctions :: Assertion
 test_syntaxUtilityFunctions = do

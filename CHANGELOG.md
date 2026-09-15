@@ -11,8 +11,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Remove the `NoSourceSpan` constructor and `noSourceSpan`. A `SourceSpan` is
   now always a concrete span. Parsed syntax gets the span of the tokens it
   consumed, or the zero-width span where the parser stands when it consumed
-  none. Parse errors carry a `Maybe SourceSpan`, so `parseModule`,
-  `ParseErr`, and `formatParseErrors` use `[(Maybe SourceSpan, Text)]`.
+  none. Every parse error has a span too: an error that names no token, such
+  as one raised with `fail`, is located at the token the parser stood on when
+  it was raised.
 - `sourceSpanSourceName` is now a `Text` rather than a `FilePath`. Callers
   that read the field get a `Text`; callers that build a `SourceSpan` by hand
   pass a `Text`. The name given as `parserSourceName` is still a `FilePath`

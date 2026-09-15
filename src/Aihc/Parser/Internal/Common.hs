@@ -80,7 +80,7 @@ where
 
 import Aihc.Parser.Lex (LayoutState (..), LexToken (..), LexTokenKind (..), TokenOrigin (..), closeImplicitLayoutContext)
 import Aihc.Parser.Syntax
-import Aihc.Parser.Types (ParserErrorComponent (..), TokStream (..), mkFoundToken, setTokStreamLayout, setTokStreamPendingPragmas, tokStreamExtensionSet)
+import Aihc.Parser.Types (ParserErrorComponent (..), TokStream (..), mkFoundToken, setTokStreamLayout, setTokStreamPendingPragmas, sourcePosSpan, tokStreamExtensionSet)
 import Control.Monad (guard)
 import Data.Char (isUpper)
 import Data.Functor (($>))
@@ -484,7 +484,7 @@ consumedSpan inputStart startInput startOffset endInput endOffset =
       | otherwise -> emptySpanAtStart next
     (Just next, Nothing) -> emptySpanAtStart next
     (Nothing, Just prev) -> emptySpanAtEnd prev
-    (Nothing, Nothing) -> spanAtInputStart
+    (Nothing, Nothing) -> sourcePosSpan inputStart
   where
     emptySpanAtStart sp =
       sp
@@ -497,16 +497,6 @@ consumedSpan inputStart startInput startOffset endInput endOffset =
         { sourceSpanStartLine = sourceSpanEndLine sp,
           sourceSpanStartCol = sourceSpanEndCol sp,
           sourceSpanStartOffset = sourceSpanEndOffset sp
-        }
-    spanAtInputStart =
-      SourceSpan
-        { sourceSpanSourceName = T.pack (MP.sourceName inputStart),
-          sourceSpanStartLine = MP.unPos (MP.sourceLine inputStart),
-          sourceSpanStartCol = MP.unPos (MP.sourceColumn inputStart),
-          sourceSpanEndLine = MP.unPos (MP.sourceLine inputStart),
-          sourceSpanEndCol = MP.unPos (MP.sourceColumn inputStart),
-          sourceSpanStartOffset = 0,
-          sourceSpanEndOffset = 0
         }
 
 -- | Run a parser and combine its result with the span of the consumed tokens.

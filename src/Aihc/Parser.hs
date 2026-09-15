@@ -30,7 +30,7 @@ module Aihc.Parser
   )
 where
 
-import Aihc.Parser.Internal.Common (drainParseErrors, eofTok)
+import Aihc.Parser.Internal.Common (TokParser, drainParseErrors, eofTok)
 import Aihc.Parser.Internal.Decl (declParser)
 import Aihc.Parser.Internal.Errors (parseErrorBundleToSpannedText, parseErrorsToSpannedText)
 import Aihc.Parser.Internal.Expr (exprParser)
@@ -38,7 +38,7 @@ import Aihc.Parser.Internal.Module (moduleParser)
 import Aihc.Parser.Internal.Pattern (patternParser)
 import Aihc.Parser.Internal.Type (typeParser, typeSignatureParser)
 import Aihc.Parser.Pretty ()
-import Aihc.Parser.Syntax (Decl, Expr, Module (..), Pattern, SourceSpan (..), Type, applyImpliedExtensions)
+import Aihc.Parser.Syntax (Decl, Expr, Extension, Module (..), Pattern, SourceSpan (..), Type, applyImpliedExtensions)
 import Aihc.Parser.Types
 import Data.ByteString qualified as BS
 import Data.List qualified as List
@@ -85,11 +85,7 @@ defaultConfig =
 -- >>> case parseExpr defaultConfig "1 +" of { ParseErr _ -> "error"; ParseOk _ -> "ok" }
 -- "error"
 parseExpr :: ParserConfig -> Text -> ParseResult Expr
-parseExpr cfg input =
-  let ts = mkTokStream (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-   in case runTokStreamParser (exprParser <* eofTok) (parserSourceName cfg) ts of
-        Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
-        Right expr -> ParseOk expr
+parseExpr = runEntry mkTokStream (exprParser <* eofTok)
 
 -- | Parse a Haskell pattern.
 --
@@ -99,11 +95,7 @@ parseExpr cfg input =
 -- >>> shorthand $ parsePattern defaultConfig "Just x"
 -- ParseOk (PCon "Just" [PVar "x"])
 parsePattern :: ParserConfig -> Text -> ParseResult Pattern
-parsePattern cfg input =
-  let ts = mkTokStream (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-   in case runTokStreamParser (patternParser <* eofTok) (parserSourceName cfg) ts of
-        Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
-        Right pat -> ParseOk pat
+parsePattern = runEntry mkTokStream (patternParser <* eofTok)
 
 -- | Parse a Haskell signature type.
 --
@@ -113,11 +105,7 @@ parsePattern cfg input =
 -- >>> case parseSignatureType defaultConfig "_ :: _" of { ParseErr _ -> "error"; ParseOk _ -> "ok" }
 -- "error"
 parseSignatureType :: ParserConfig -> Text -> ParseResult Type
-parseSignatureType cfg input =
-  let ts = mkTokStream (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-   in case runTokStreamParser (typeSignatureParser <* eofTok) (parserSourceName cfg) ts of
-        Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
-        Right ty -> ParseOk ty
+parseSignatureType = runEntry mkTokStream (typeSignatureParser <* eofTok)
 
 -- | Parse a Haskell type in the general declaration RHS context.
 --
@@ -130,22 +118,14 @@ parseSignatureType cfg input =
 -- >>> shorthand $ parseType defaultConfig "_ :: _"
 -- ParseOk (TKindSig (TWildcard) (TWildcard))
 parseType :: ParserConfig -> Text -> ParseResult Type
-parseType cfg input =
-  let ts = mkTokStream (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-   in case runTokStreamParser (typeParser <* eofTok) (parserSourceName cfg) ts of
-        Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
-        Right ty -> ParseOk ty
+parseType = runEntry mkTokStream (typeParser <* eofTok)
 
 -- | Parse a single Haskell declaration.
 --
 -- >>> shorthand $ parseDecl defaultConfig "f x = x + 1"
 -- ParseOk (DeclValue (FunctionBind "f" [Match {MatchHeadPrefix, [PVar "x"], EInfix (EVar "x") "+" (EInt 1 TInteger)}]))
 parseDecl :: ParserConfig -> Text -> ParseResult Decl
-parseDecl cfg input =
-  let ts = mkTokStream (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-   in case runTokStreamParser (declParser <* eofTok) (parserSourceName cfg) ts of
-        Left bundle -> ParseErr (parseErrorBundleToSpannedText bundle)
-        Right decl -> ParseOk decl
+parseDecl = runEntry mkTokStream (declParser <* eofTok)
 
 -- | Parse a complete Haskell module.
 --
@@ -160,29 +140,44 @@ parseDecl cfg input =
 --
 -- >>> case parseModule defaultConfig "x = 1" of { (_, m) -> moduleName m }
 -- Nothing
-parseModule :: ParserConfig -> Text -> ([(Maybe SourceSpan, Text)], Module)
+parseModule :: ParserConfig -> Text -> ([(SourceSpan, Text)], Module)
 parseModule cfg input =
-  let ts = mkTokStreamModule (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
-      parser = do
-        modu <- moduleParser
-        errs <- drainParseErrors
-        pure (errs, modu)
-   in case runTokStreamParser parser (parserSourceName cfg) ts of
-        Left bundle ->
-          ( parseErrorBundleToSpannedText bundle,
-            Module
-              { moduleAnns = [],
-                moduleHead = Nothing,
-                moduleLanguagePragmas = [],
-                moduleImports = [],
-                moduleDecls = []
-              }
-          )
-        Right (errs, modu) ->
-          (parseErrorsToSpannedText errs, modu)
+  case runTokStreamParser parser sourceName (mkTokStreamModule sourceName exts input) of
+    Left bundle ->
+      ( parseErrorBundleToSpannedText sourceName errorStream bundle,
+        Module
+          { moduleAnns = [],
+            moduleHead = Nothing,
+            moduleLanguagePragmas = [],
+            moduleImports = [],
+            moduleDecls = []
+          }
+      )
+    Right (errs, modu) ->
+      (parseErrorsToSpannedText sourceName errorStream errs, modu)
+  where
+    sourceName = parserSourceName cfg
+    exts = applyImpliedExtensions (parserExtensions cfg)
+    errorStream = rebuildStream (\(name, es, src) -> mkTokStreamModule name es src) (sourceName, exts, input)
+    parser = do
+      modu <- moduleParser
+      errs <- drainParseErrors
+      pure (errs, modu)
+
+-- | Run a parser over freshly lexed input. Errors are located on a stream
+-- built again from the input, so the parse itself does not retain the token
+-- chain (see 'rebuildStream').
+runEntry :: (FilePath -> [Extension] -> Text -> TokStream) -> TokParser a -> ParserConfig -> Text -> ParseResult a
+runEntry mkStream parser cfg input =
+  case runTokStreamParser parser sourceName (mkStream sourceName exts input) of
+    Left bundle -> ParseErr (parseErrorBundleToSpannedText sourceName (rebuildStream (\(name, es, src) -> mkStream name es src) (sourceName, exts, input)) bundle)
+    Right parsed -> ParseOk parsed
+  where
+    sourceName = parserSourceName cfg
+    exts = applyImpliedExtensions (parserExtensions cfg)
 
 -- | Pretty-print a list of spanned parse errors with source context.
-formatParseErrors :: FilePath -> Maybe Text -> [(Maybe SourceSpan, Text)] -> String
+formatParseErrors :: FilePath -> Maybe Text -> [(SourceSpan, Text)] -> String
 formatParseErrors sourceName mSource errs =
   let opts = defaultLayoutOptions
       blocks =
@@ -191,7 +186,7 @@ formatParseErrors sourceName mSource errs =
               renderString
                 ( layoutPretty opts $
                     case (srcSpan, mSource) of
-                      (Just ss, Just source) ->
+                      (ss, Just source) ->
                         vcat [renderSourceReference source ss, pretty msg]
                       _ ->
                         vcat [pretty sourceName, pretty msg]

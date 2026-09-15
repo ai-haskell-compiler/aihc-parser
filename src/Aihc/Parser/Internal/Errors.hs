@@ -5,10 +5,11 @@ module Aihc.Parser.Internal.Errors
 where
 
 import Aihc.Parser.Lex (LexToken (..), TokenOrigin (..))
-import Aihc.Parser.Syntax (SourceSpan)
-import Aihc.Parser.Types (FoundToken (..), ParseErrorBundle, ParserErrorComponent (..), TokStream)
+import Aihc.Parser.Syntax (SourceSpan (..))
+import Aihc.Parser.Types (FoundToken (..), ParseErrorBundle, ParserErrorComponent (..), TokStream (..), sourcePosSpan)
 import Data.List qualified as List
 import Data.List.NonEmpty qualified as NE
+import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -18,17 +19,51 @@ import Text.Megaparsec qualified as MP
 import Text.Megaparsec.Error (ErrorFancy (..), ErrorItem (..))
 import Text.Megaparsec.Error qualified as MPE
 
-parseErrorBundleToSpannedText :: ParseErrorBundle -> [(Maybe SourceSpan, Text)]
-parseErrorBundleToSpannedText bundle =
-  parseErrorsToSpannedText (NE.toList (MPE.bundleErrors bundle))
+-- | Render the errors of a failed parse, each with a source span.
+--
+-- The stream is a fresh stream over the same input, positioned at offset 0.
+-- It must not be the stream that was parsed: holding that one keeps its
+-- memoized successor chain alive for the whole parse (see
+-- 'Aihc.Parser.Types.runTokStreamParser').
+parseErrorBundleToSpannedText :: FilePath -> TokStream -> ParseErrorBundle -> [(SourceSpan, Text)]
+parseErrorBundleToSpannedText sourceName stream bundle =
+  parseErrorsToSpannedText sourceName stream (NE.toList (MPE.bundleErrors bundle))
 
-parseErrorsToSpannedText :: [MPE.ParseError TokStream ParserErrorComponent] -> [(Maybe SourceSpan, Text)]
-parseErrorsToSpannedText errs =
-  [ (mSpan, RText.renderStrict (layoutPretty defaultLayoutOptions doc))
+-- | Render parse errors, each with a source span. See
+-- 'parseErrorBundleToSpannedText' for the stream argument.
+parseErrorsToSpannedText :: FilePath -> TokStream -> [MPE.ParseError TokStream ParserErrorComponent] -> [(SourceSpan, Text)]
+parseErrorsToSpannedText sourceName stream errs =
+  [ (fromMaybe (spanAtOffset sourceName stream (MP.errorOffset err)) mSpan, RText.renderStrict (layoutPretty defaultLayoutOptions doc))
   | err <- List.sortOn MP.errorOffset errs,
     (mSpan, doc) <- renderParseErrors err
   ]
 
+-- | The span of the token at an offset of a stream that starts at offset 0.
+-- This is where the parser stood when it raised an error at that offset, so
+-- it locates errors that carry no token of their own, such as one raised with
+-- 'fail'. Past the last token the span is the zero-width end of that token; a
+-- stream with no tokens at all gives the zero-width start of the input.
+spanAtOffset :: FilePath -> TokStream -> Int -> SourceSpan
+spanAtOffset sourceName = go
+  where
+    go stream n =
+      case tokStreamNext stream of
+        Just (tok, rest)
+          | n > 0 -> go rest (n - 1)
+          | otherwise -> lexTokenSpan tok
+        Nothing ->
+          case tokStreamPrevToken stream of
+            Just prev -> spanEnd (lexTokenSpan prev)
+            Nothing -> sourcePosSpan (MP.initialPos sourceName)
+    spanEnd sp =
+      sp
+        { sourceSpanStartLine = sourceSpanEndLine sp,
+          sourceSpanStartCol = sourceSpanEndCol sp,
+          sourceSpanStartOffset = sourceSpanEndOffset sp
+        }
+
+-- | Render an error's messages, each with the span of the token it names, if
+-- it names one.
 renderParseErrors :: MPE.ParseError TokStream ParserErrorComponent -> [(Maybe SourceSpan, Doc ann)]
 renderParseErrors err =
   case err of
