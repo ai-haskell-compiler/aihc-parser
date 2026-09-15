@@ -1113,11 +1113,11 @@ recordFieldsWithWildcardsParser fieldsParser = do
   fields <- fieldsParser
   if rwcEnabled
     then do
-      mDotDot <- optionalTokThen TkReservedDotDot (pure ())
-      case mDotDot of
-        Nothing -> pure (fields, False)
-        Just _ -> do
-          _ <- optionalTokThen TkSpecialComma (pure ())
+      hasDotDot <- optionalTok TkReservedDotDot
+      if not hasDotDot
+        then pure (fields, False)
+        else do
+          _ <- optionalTok TkSpecialComma
           pure (fields, True)
     else pure (fields, False)
 

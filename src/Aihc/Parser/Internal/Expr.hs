@@ -888,10 +888,10 @@ caseExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
 parenExprParser :: TokParser Expr
 parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
   (tupleFlavor, closeTok) <- tupleDelimsParser
-  mClosed <- optionalTokThen closeTok (pure ())
-  case mClosed of
-    Just () -> pure (ETuple tupleFlavor [])
-    Nothing ->
+  closedImmediately <- optionalTok closeTok
+  if closedImmediately
+    then pure (ETuple tupleFlavor [])
+    else
       if tupleFlavor == Boxed
         then MP.try (parseNegateParen closeTok) <|> parseBoxedContent closeTok
         else MP.try (parseUnboxedSumExprLeadingBars closeTok) <|> parseTupleOrParen tupleFlavor closeTok
@@ -963,11 +963,10 @@ parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
                       finalExpr <- maybeViewPattern typed
                       finishBoxed closeTok (Just finalExpr)
                 Just op -> do
-                  mClose <- optionalTokThen closeTok (pure ())
-                  case mClose of
-                    Just () ->
-                      pure (EParen (ESectionL base op))
-                    Nothing -> do
+                  closedAfterOperator <- optionalTok closeTok
+                  if closedAfterOperator
+                    then pure (EParen (ESectionL base op))
+                    else do
                       rhs <- region "after infix operator" lexpParser
                       more <-
                         MP.many
@@ -1017,49 +1016,49 @@ parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
               _ -> Nothing
 
     finishBoxed closeTok mFirst = do
-      mComma <- optionalTokThen TkSpecialComma (pure ())
-      case (mFirst, mComma) of
-        (Just e, Nothing) -> do
+      hasComma <- optionalTok TkSpecialComma
+      case (mFirst, hasComma) of
+        (Just e, False) -> do
           expectedTok closeTok
           pure (EParen e)
-        (_, Just ()) -> do
+        (_, True) -> do
           rest <- parseTupleElems closeTok
           pure (ETuple Boxed (mFirst : rest))
-        (Nothing, Nothing) ->
+        (Nothing, False) ->
           fail "expected expression or closing paren"
 
     parseTupleOrParen tupleFlavor closeTok = do
       first <- MP.optional texprParser
-      mComma <- optionalTokThen TkSpecialComma (pure ())
-      case (first, mComma) of
-        (Just e, Nothing) ->
+      hasComma <- optionalTok TkSpecialComma
+      case (first, hasComma) of
+        (Just e, False) ->
           case tupleFlavor of
             Boxed -> do
               expectedTok closeTok
               pure (EParen e)
             Unboxed -> do
-              mPipe <- optionalTokThen TkReservedPipe (pure ())
-              case mPipe of
-                Just () -> do
+              hasPipe <- optionalTok TkReservedPipe
+              if hasPipe
+                then do
                   trailingBars <- MP.many (expectedTok TkReservedPipe)
                   expectedTok closeTok
                   let arity = 2 + length trailingBars
                   pure (EUnboxedSum 0 arity e)
-                Nothing -> do
+                else do
                   expectedTok closeTok
                   pure (ETuple Unboxed [Just e])
-        (_, Just ()) -> do
+        (_, True) -> do
           rest <- parseTupleElems closeTok
           pure (ETuple tupleFlavor (first : rest))
-        (Nothing, Nothing) ->
+        (Nothing, False) ->
           fail "expected expression or closing paren"
 
     parseTupleElems closeTok = do
       e <- MP.optional texprParser
-      mComma <- optionalTokThen TkSpecialComma (pure ())
-      case mComma of
-        Just () -> (e :) <$> parseTupleElems closeTok
-        Nothing -> do
+      hasComma <- optionalTok TkSpecialComma
+      if hasComma
+        then (e :) <$> parseTupleElems closeTok
+        else do
           expectedTok closeTok
           pure [e]
 
@@ -1076,10 +1075,10 @@ parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
 listExprParser :: TokParser Expr
 listExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
   expectedTok TkSpecialLBracket
-  mClose <- optionalTokThen TkSpecialRBracket (pure ())
-  case mClose of
-    Just () -> pure (EList [])
-    Nothing -> do
+  closedImmediately <- optionalTok TkSpecialRBracket
+  if closedImmediately
+    then pure (EList [])
+    else do
       first <- exprParser
       parseListTail first
 
@@ -1174,10 +1173,10 @@ compGroupStmtParser = do
 compThenStmtParser :: TokParser CompStmt
 compThenStmtParser = do
   f <- compTransformExprParser
-  mBy <- optionalTokThen TkKeywordBy (pure ())
-  case mBy of
-    Just () -> CompThenBy f <$> exprParser
-    Nothing -> pure (CompThen f)
+  hasBy <- optionalTok TkKeywordBy
+  if hasBy
+    then CompThenBy f <$> exprParser
+    else pure (CompThen f)
 
 -- | Expression parser for TransformListComp context.
 -- Parses an expression but treats bare 'by' and 'using' as terminators

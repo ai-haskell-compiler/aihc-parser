@@ -311,12 +311,12 @@ varOrConPatternParser = do
 recordFieldPatternParser :: TokParser (RecordField Pattern)
 recordFieldPatternParser = do
   field <- recordFieldNameParser
-  mEq <- optionalTokThen TkReservedEquals (pure ())
-  case mEq of
-    Just () -> do
+  hasEquals <- optionalTok TkReservedEquals
+  if hasEquals
+    then do
       pat <- subpatternWithBareViewParser
       pure (RecordField field pat False)
-    Nothing -> do
+    else
       -- NamedFieldPuns: just "field" means "field = field"
       pure (RecordField field (PVar (nameToUnqualified field)) True)
 
@@ -515,28 +515,28 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
 
     tupleOrParenPatternParser tupleFlavor closeTok = do
       (isBareOp, first) <- parenPatElementParser
-      mComma <- optionalTokThen TkSpecialComma (pure ())
-      case mComma of
-        Nothing -> do
+      hasComma <- optionalTok TkSpecialComma
+      if hasComma
+        then do
+          (_, second) <- parenPatElementParser
+          more <- MP.many (expectedTok TkSpecialComma *> (snd <$> parenPatElementParser))
+          expectedTok closeTok
+          pure (PTuple tupleFlavor (first : second : more))
+        else do
           -- Check for pipe (unboxed sum: pattern in first slot)
-          mPipe <- if tupleFlavor == Unboxed then optionalTokThen TkReservedPipe (pure ()) else pure Nothing
-          case mPipe of
-            Just () -> do
+          hasPipe <- if tupleFlavor == Unboxed then optionalTok TkReservedPipe else pure False
+          if hasPipe
+            then do
               -- (# pat | ... #) - pattern in first slot of sum
               trailingBars <- MP.many (expectedTok TkReservedPipe)
               expectedTok closeTok
               let arity = 2 + length trailingBars
               pure (PUnboxedSum 0 arity first)
-            Nothing -> do
+            else do
               expectedTok closeTok
               if tupleFlavor == Boxed
                 then parenOrSymConParser isBareOp first
                 else pure (PTuple Unboxed [first])
-        Just () -> do
-          (_, second) <- parenPatElementParser
-          more <- MP.many (expectedTok TkSpecialComma *> (snd <$> parenPatElementParser))
-          expectedTok closeTok
-          pure (PTuple tupleFlavor (first : second : more))
 
     parseUnboxedSumPatLeadingBars closeTok = do
       -- Parse (# | | ... | pat | ... | #) where pattern is not in first slot

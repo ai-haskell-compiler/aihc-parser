@@ -509,10 +509,10 @@ isStarTypeSymbol starIsType unicodeSyntax sym =
 typeListParser :: TokParser Type
 typeListParser = withSpanAnn (TAnn . mkAnnotation) $ do
   expectedTok TkSpecialLBracket
-  mClosed <- optionalTokThen TkSpecialRBracket (pure ())
-  case mClosed of
-    Just () -> pure (TBuiltinCon BuiltinList Unpromoted)
-    Nothing -> do
+  closedImmediately <- optionalTok TkSpecialRBracket
+  if closedImmediately
+    then pure (TBuiltinCon BuiltinList Unpromoted)
+    else do
       elems <- typeParser `MP.sepBy1` expectedTok TkSpecialComma
       expectedTok TkSpecialRBracket
       pure (TList Unpromoted elems)
@@ -520,11 +520,10 @@ typeListParser = withSpanAnn (TAnn . mkAnnotation) $ do
 typeParenOrTupleParser :: TokParser Type
 typeParenOrTupleParser = withSpanAnn (TAnn . mkAnnotation) $ do
   (tupleFlavor, closeTok) <- tupleDelimsParser
-  mClosed <- optionalTokThen closeTok (pure ())
-  case mClosed of
-    Just () -> pure (TTuple tupleFlavor Unpromoted [])
-    Nothing -> do
-      MP.try (tupleConstructorParser tupleFlavor closeTok) <|> parenthesizedTypeOrTupleParser tupleFlavor closeTok
+  closedImmediately <- optionalTok closeTok
+  if closedImmediately
+    then pure (TTuple tupleFlavor Unpromoted [])
+    else MP.try (tupleConstructorParser tupleFlavor closeTok) <|> parenthesizedTypeOrTupleParser tupleFlavor closeTok
   where
     tupleConstructorParser tupleFlavor closeTok = do
       _ <- expectedTok TkSpecialComma
@@ -541,27 +540,27 @@ typeParenOrTupleParser = withSpanAnn (TAnn . mkAnnotation) $ do
           expectedTok closeTok
           pure (TParen (TKindSig first kind))
         Nothing -> do
-          mComma <- optionalTokThen TkSpecialComma (pure ())
-          case mComma of
-            Nothing -> do
-              -- Check for pipe (unboxed sum type)
-              mPipe <- if tupleFlavor == Unboxed then optionalTokThen TkReservedPipe (pure ()) else pure Nothing
-              case mPipe of
-                Just () -> do
-                  -- (# Type1 | Type2 | ... #) - unboxed sum type
-                  rest <- typeParser `MP.sepBy1` expectedTok TkReservedPipe
-                  expectedTok closeTok
-                  pure (TUnboxedSum (first : rest))
-                Nothing -> do
-                  expectedTok closeTok
-                  case tupleFlavor of
-                    Boxed -> pure (TParen first)
-                    Unboxed -> pure (TTuple Unboxed Unpromoted [first])
-            Just () -> do
+          hasComma <- optionalTok TkSpecialComma
+          if hasComma
+            then do
               second <- typeParser
               more <- MP.many (expectedTok TkSpecialComma *> typeParser)
               expectedTok closeTok
               pure (TTuple tupleFlavor Unpromoted (first : second : more))
+            else do
+              -- Check for pipe (unboxed sum type)
+              hasPipe <- if tupleFlavor == Unboxed then optionalTok TkReservedPipe else pure False
+              if hasPipe
+                then do
+                  -- (# Type1 | Type2 | ... #) - unboxed sum type
+                  rest <- typeParser `MP.sepBy1` expectedTok TkReservedPipe
+                  expectedTok closeTok
+                  pure (TUnboxedSum (first : rest))
+                else do
+                  expectedTok closeTok
+                  case tupleFlavor of
+                    Boxed -> pure (TParen first)
+                    Unboxed -> pure (TTuple Unboxed Unpromoted [first])
 
 markTypePromoted :: Type -> Maybe Type
 markTypePromoted ty =

@@ -174,10 +174,10 @@ cmdBindOrBodyStmtParser :: TokParser (DoStmt Cmd)
 cmdBindOrBodyStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
   -- Arrow tails (-<, -<<) belong to the command level, not the expression.
   expr <- exprParser
-  mArrow <- optionalTokThen TkReservedLeftArrow (pure ())
-  case mArrow of
-    Just () -> DoBind <$> liftCheck (checkPattern expr) <*> cmdParser
-    Nothing -> do
+  hasArrow <- optionalTok TkReservedLeftArrow
+  if hasArrow
+    then DoBind <$> liftCheck (checkPattern expr) <*> cmdParser
+    else do
       -- No bind arrow: this is a body statement.  Check for arrow tail.
       mArrTail <- MP.optional cmdArrTailParser
       case mArrTail of

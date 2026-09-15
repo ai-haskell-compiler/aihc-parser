@@ -65,10 +65,10 @@ A second round of the same kind:
   `lookAhead anySingle`. Every dispatch point in the parser used the latter,
   and paid for a state save and restore, the `token` machinery and a monadic
   bind each time.
-- Optional tokens are decided on the peeked token
-  (`optionalTokThen TkSpecialComma …`) instead of by running a parser and
-  recovering from its failure. This replaced 45 uses of
-  `MP.optional (expectedTok …)`, including the record braces and record dot
+- Optional tokens are decided on the peeked token — `optionalTok` for a token
+  on its own, `optionalTokThen` for one that introduces a parser — instead of
+  by running a parser and recovering from its failure. This replaced 45 uses
+  of `MP.optional (expectedTok …)`, including the record braces and record dot
   that used to be tried after every atom in the file.
 - The infix-operator chain, parenthesized operator sections such as `(+)`, the
   record-construction base and type applications as function arguments are all

@@ -20,7 +20,7 @@ import Aihc.Parser.Types (ParserErrorComponent (..), TokStream (..), mkFoundToke
 import Control.Monad (when)
 import Data.Char (isLower)
 import Data.Functor (($>))
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Text.Megaparsec (anySingle, lookAhead, (<|>))
@@ -505,7 +505,7 @@ classDefaultTypeInstParser' requireInstance = withSpanAnn (ClassItemAnn . mkAnno
 instanceTypeFamilyInstParser :: TokParser InstanceDeclItem
 instanceTypeFamilyInstParser = withSpanAnn (InstanceItemAnn . mkAnnotation) $ do
   expectedTok TkKeywordType
-  _ <- optionalTokThen TkKeywordInstance (pure ())
+  _ <- optionalTok TkKeywordInstance
   forallBinders <- MP.option [] explicitForallParser
   (headForm, lhs) <- typeFamilyLhsParser
   expectedTok TkReservedEquals
@@ -524,7 +524,7 @@ instanceTypeFamilyInstParser = withSpanAnn (InstanceItemAnn . mkAnnotation) $ do
 instanceDataFamilyInstParser :: TokParser InstanceDeclItem
 instanceDataFamilyInstParser = withSpanAnn (InstanceItemAnn . mkAnnotation) $ do
   expectedTok TkKeywordData
-  _ <- optionalTokThen TkKeywordInstance (pure ())
+  _ <- optionalTok TkKeywordInstance
   (_, head') <- typeFamilyLhsParser
   kind <- familyResultKindParser
   (constructors, derivingClauses) <- gadtDataDeclParser <|> traditionalDataDeclParser
@@ -544,7 +544,7 @@ instanceDataFamilyInstParser = withSpanAnn (InstanceItemAnn . mkAnnotation) $ do
 instanceNewtypeFamilyInstParser :: TokParser InstanceDeclItem
 instanceNewtypeFamilyInstParser = withSpanAnn (InstanceItemAnn . mkAnnotation) $ do
   expectedTok TkKeywordNewtype
-  _ <- optionalTokThen TkKeywordInstance (pure ())
+  _ <- optionalTok TkKeywordInstance
   (_, head') <- typeFamilyLhsParser
   kind <- familyResultKindParser
   expectedTok TkReservedEquals
@@ -1063,11 +1063,10 @@ listConDeclParser forallVars context = do
 boxedTupleConDeclParser :: [TyVarBinder] -> [Type] -> TokParser DataConDecl
 boxedTupleConDeclParser forallVars context = do
   expectedTok TkSpecialLParen
-  mClose <- optionalTokThen TkSpecialRParen (pure ())
-  case mClose of
-    Just () ->
-      pure (TupleCon forallVars context Boxed [])
-    Nothing -> do
+  closedImmediately <- optionalTok TkSpecialRParen
+  if closedImmediately
+    then pure (TupleCon forallVars context Boxed [])
+    else do
       firstField <- constructorArgParser
       -- A comma is mandatory: boxed 1-tuples don't exist in Haskell
       -- (e.g. @data C = (Int)@ is invalid). Without this, a
@@ -1081,11 +1080,10 @@ boxedTupleConDeclParser forallVars context = do
 unboxedConDeclParser :: [TyVarBinder] -> [Type] -> TokParser DataConDecl
 unboxedConDeclParser forallVars context = do
   expectedTok TkSpecialUnboxedLParen
-  mClose <- optionalTokThen TkSpecialUnboxedRParen (pure ())
-  case mClose of
-    Just () ->
-      pure (TupleCon forallVars context Unboxed [])
-    Nothing -> do
+  closedImmediately <- optionalTok TkSpecialUnboxedRParen
+  if closedImmediately
+    then pure (TupleCon forallVars context Unboxed [])
+    else do
       leadingPipes <- MP.many (MP.try (expectedTok TkReservedPipe))
       if not (null leadingPipes)
         then do
@@ -1435,7 +1433,7 @@ typeFamilyDeclBodyParser familyKeywordMode = do
   expectedTok TkKeywordType
   explicitFamilyKeyword <- case familyKeywordMode of
     FamilyKeywordRequired -> expectedTok TkVarFamily $> True
-    FamilyKeywordOptional -> isJust <$> optionalTokThen TkVarFamily (pure ())
+    FamilyKeywordOptional -> optionalTok TkVarFamily
   (headForm, headType, params) <- typeFamilyHeadParser
   resultSig <- typeFamilyResultSigParser explicitFamilyKeyword
   equations <-
