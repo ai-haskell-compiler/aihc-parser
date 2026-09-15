@@ -261,6 +261,7 @@ buildTests = do
             testCase "shrunk standalone kind signatures shrink binder kinds" test_shrunkStandaloneKindSignaturesShrinkBinderKinds,
             testCase "shrunk module headers without warnings make progress" test_shrunkModuleHeaderWithoutWarningMakesProgress,
             testCase "syntax utility functions cover public edge cases" test_syntaxUtilityFunctions,
+            testCase "parse errors without a token are located at the parser offset" test_parseErrorOffsetSpan,
             testCase "shrunk class default pattern binds make progress" test_shrunkClassDefaultPatternBindMakesProgress,
             testCase "parsed binders carry source spans" test_parsedBindersCarrySourceSpans,
             testCase "every top-level declaration carries a source span" test_everyTopLevelDeclarationCarriesSourceSpan,
@@ -734,17 +735,14 @@ test_indentedHashLineIsOperator =
     other -> assertFailure ("expected indented '# line' to lex as operator + identifier, got: " <> show other)
 
 assertSourceSpan :: Text -> Int -> Int -> Int -> Int -> Int -> Int -> SourceSpan -> Assertion
-assertSourceSpan expectedName expectedStartLine expectedStartCol expectedEndLine expectedEndCol expectedStartOffset expectedEndOffset span' =
-  case span' of
-    SourceSpan {sourceSpanSourceName, sourceSpanStartLine, sourceSpanStartCol, sourceSpanEndLine, sourceSpanEndCol, sourceSpanStartOffset, sourceSpanEndOffset} -> do
-      assertEqual "source name" expectedName sourceSpanSourceName
-      assertEqual "start line" expectedStartLine sourceSpanStartLine
-      assertEqual "start col" expectedStartCol sourceSpanStartCol
-      assertEqual "end line" expectedEndLine sourceSpanEndLine
-      assertEqual "end col" expectedEndCol sourceSpanEndCol
-      assertEqual "start offset" expectedStartOffset sourceSpanStartOffset
-      assertEqual "end offset" expectedEndOffset sourceSpanEndOffset
-    NoSourceSpan -> assertFailure "expected SourceSpan, got NoSourceSpan"
+assertSourceSpan expectedName expectedStartLine expectedStartCol expectedEndLine expectedEndCol expectedStartOffset expectedEndOffset SourceSpan {sourceSpanSourceName, sourceSpanStartLine, sourceSpanStartCol, sourceSpanEndLine, sourceSpanEndCol, sourceSpanStartOffset, sourceSpanEndOffset} = do
+  assertEqual "source name" expectedName sourceSpanSourceName
+  assertEqual "start line" expectedStartLine sourceSpanStartLine
+  assertEqual "start col" expectedStartCol sourceSpanStartCol
+  assertEqual "end line" expectedEndLine sourceSpanEndLine
+  assertEqual "end col" expectedEndCol sourceSpanEndCol
+  assertEqual "start offset" expectedStartOffset sourceSpanStartOffset
+  assertEqual "end offset" expectedEndOffset sourceSpanEndOffset
 
 assertUnqualifiedNameSpan :: String -> Text -> Int -> Int -> Int -> Int -> Int -> Int -> UnqualifiedName -> Assertion
 assertUnqualifiedNameSpan label expectedName expectedStartLine expectedStartCol expectedEndLine expectedEndCol expectedStartOffset expectedEndOffset name =
@@ -756,6 +754,16 @@ assertReadRoundTrip :: (Eq a, Read a, Show a) => String -> [a] -> Assertion
 assertReadRoundTrip label =
   mapM_ $ \value ->
     assertEqual (label <> ": " <> show value) (Just value) (readMaybe (show value))
+
+-- A `fail` inside the parser raises an error that names no token. Its span
+-- is recovered from the error offset: the token the parser stood on.
+test_parseErrorOffsetSpan :: Assertion
+test_parseErrorOffsetSpan =
+  case parseModule defaultConfig "{-# LANGUAGE TransformListComp #-}\nx = [y | y <- ys, then group z]" of
+    ([(span', message)], _) -> do
+      assertEqual "message" "expected 'by' or 'using' after 'group'" message
+      assertSourceSpan "<input>" 2 30 2 31 64 65 span'
+    (errs, _) -> assertFailure ("expected exactly one parse error, got: " <> show errs)
 
 test_syntaxUtilityFunctions :: Assertion
 test_syntaxUtilityFunctions = do
@@ -794,11 +802,8 @@ test_syntaxUtilityFunctions = do
   let spanA = SourceSpan "A.hs" 1 2 1 4 0 2
       spanB = SourceSpan "A.hs" 2 1 2 5 3 7
       merged = SourceSpan "A.hs" 1 2 2 5 0 7
-  assertEqual "show no source span" "NoSourceSpan" (show noSourceSpan)
   assertEqual "show source span" "SourceSpan 1 2 2 5" (show merged)
   assertEqual "merge source spans" merged (mergeSourceSpans spanA spanB)
-  assertEqual "merge left missing source span" spanB (mergeSourceSpans NoSourceSpan spanB)
-  assertEqual "merge right missing source span" spanA (mergeSourceSpans spanA NoSourceSpan)
   assertBool "source span ordering" (spanA < spanB)
   assertBool "source span nfdata" (rnf merged `seq` True)
 

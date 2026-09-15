@@ -935,11 +935,11 @@ typeDataDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
 -- | Parse constructors for type data (traditional style, after `=`)
 -- No labelled fields, no strictness annotations
 typeDataConDeclParser :: TokParser DataConDecl
-typeDataConDeclParser = withSpan $ do
+typeDataConDeclParser = withSpanAnn (DataConAnn . mkAnnotation) $ do
   (_forallVars, context) <- dataConQualifiersParser
   MP.try (typeDataConPrefixParser context) <|> typeDataConInfixParser context
 
-typeDataConPrefixParser :: [Type] -> TokParser (SourceSpan -> DataConDecl)
+typeDataConPrefixParser :: [Type] -> TokParser DataConDecl
 typeDataConPrefixParser context = do
   conName <- constructorUnqualifiedNameParser <|> parens constructorOperatorUnqualifiedNameParser
   -- Parse arguments (no strictness, no records).
@@ -948,14 +948,13 @@ typeDataConPrefixParser context = do
   args <- MP.many $ BangType [] [] False False <$> typeAtomParser
   -- If a constructor operator follows, this declaration is actually infix.
   MP.notFollowedBy constructorOperatorParser
-  pure $ \span' -> DataConAnn (mkAnnotation span') (PrefixCon [] context conName args)
+  pure (PrefixCon [] context conName args)
 
-typeDataConInfixParser :: [Type] -> TokParser (SourceSpan -> DataConDecl)
+typeDataConInfixParser :: [Type] -> TokParser DataConDecl
 typeDataConInfixParser context = do
   lhs <- typeDataConArgParser
   op <- constructorOperatorUnqualifiedNameParser <|> backtickConstructorUnqualifiedParser
-  rhs <- typeDataConArgParser
-  pure $ \span' -> DataConAnn (mkAnnotation span') (InfixCon [] context lhs op rhs)
+  InfixCon [] context lhs op <$> typeDataConArgParser
   where
     backtickConstructorUnqualifiedParser = do
       expectedTok TkSpecialBacktick
@@ -974,7 +973,7 @@ gadtTypeDataWhereClauseParser = whereClauseItemsParser gadtTypeDataConDeclParser
 -- | Parse a GADT constructor for type data
 -- Only equality constraints permitted, no strictness, no records
 gadtTypeDataConDeclParser :: TokParser DataConDecl
-gadtTypeDataConDeclParser = withSpan $ do
+gadtTypeDataConDeclParser = withSpanAnn (DataConAnn . mkAnnotation) $ do
   -- Parse constructor names (can be multiple separated by commas)
   names <- gadtConNameParser `MP.sepBy1` expectedTok TkSpecialComma
   expectedTok TkReservedDoubleColon
@@ -983,8 +982,7 @@ gadtTypeDataConDeclParser = withSpan $ do
   -- Parse context (only equality constraints permitted, but we parse generally)
   context <- contextPrefixDispatchList
   -- Parse the body (prefix only for type data - no record style)
-  body <- gadtTypeDataBodyParser
-  pure $ \span' -> DataConAnn (mkAnnotation span') (GadtCon forallBinders context names body)
+  GadtCon forallBinders context names <$> gadtTypeDataBodyParser
 
 -- | Parse the body of a GADT constructor for type data
 -- Only prefix style allowed (no records), no strictness annotations
@@ -1005,7 +1003,7 @@ gadtTypeDataBodyParser = do
        in pure (GadtPrefixBody argsWithKinds resultTy)
 
 dataConDeclParser :: TokParser DataConDecl
-dataConDeclParser = withSpan $ do
+dataConDeclParser = withSpanAnn (DataConAnn . mkAnnotation) $ do
   (forallVars, context) <- dataConQualifiersParser
   tok <- lookAhead anySingle
   case lexTokenKind tok of
@@ -1025,19 +1023,19 @@ dataConDeclParser = withSpan $ do
         <|> MP.try (boxedTupleConDeclParser forallVars context)
         <|> dataConRecordOrPrefixParser forallVars context
 
-listConDeclParser :: [TyVarBinder] -> [Type] -> TokParser (SourceSpan -> DataConDecl)
+listConDeclParser :: [TyVarBinder] -> [Type] -> TokParser DataConDecl
 listConDeclParser forallVars context = do
   expectedTok TkSpecialLBracket
   expectedTok TkSpecialRBracket
-  pure $ \span' -> DataConAnn (mkAnnotation span') (ListCon forallVars context)
+  pure (ListCon forallVars context)
 
-boxedTupleConDeclParser :: [TyVarBinder] -> [Type] -> TokParser (SourceSpan -> DataConDecl)
+boxedTupleConDeclParser :: [TyVarBinder] -> [Type] -> TokParser DataConDecl
 boxedTupleConDeclParser forallVars context = do
   expectedTok TkSpecialLParen
   mClose <- MP.optional (expectedTok TkSpecialRParen)
   case mClose of
     Just () ->
-      pure $ \span' -> DataConAnn (mkAnnotation span') (TupleCon forallVars context Boxed [])
+      pure (TupleCon forallVars context Boxed [])
     Nothing -> do
       firstField <- constructorArgParser
       -- A comma is mandatory: boxed 1-tuples don't exist in Haskell
@@ -1047,15 +1045,15 @@ boxedTupleConDeclParser forallVars context = do
       expectedTok TkSpecialComma
       rest <- constructorArgParser `MP.sepBy1` expectedTok TkSpecialComma
       expectedTok TkSpecialRParen
-      pure $ \span' -> DataConAnn (mkAnnotation span') (TupleCon forallVars context Boxed (firstField : rest))
+      pure (TupleCon forallVars context Boxed (firstField : rest))
 
-unboxedConDeclParser :: [TyVarBinder] -> [Type] -> TokParser (SourceSpan -> DataConDecl)
+unboxedConDeclParser :: [TyVarBinder] -> [Type] -> TokParser DataConDecl
 unboxedConDeclParser forallVars context = do
   expectedTok TkSpecialUnboxedLParen
   mClose <- MP.optional (expectedTok TkSpecialUnboxedRParen)
   case mClose of
     Just () ->
-      pure $ \span' -> DataConAnn (mkAnnotation span') (TupleCon forallVars context Unboxed [])
+      pure (TupleCon forallVars context Unboxed [])
     Nothing -> do
       leadingPipes <- MP.many (MP.try (expectedTok TkReservedPipe))
       if not (null leadingPipes)
@@ -1065,23 +1063,23 @@ unboxedConDeclParser forallVars context = do
           expectedTok TkSpecialUnboxedRParen
           let pos = length leadingPipes + 1
               arity = length leadingPipes + 1 + length trailingPipes
-          pure $ \span' -> DataConAnn (mkAnnotation span') (UnboxedSumCon forallVars context pos arity field)
+          pure (UnboxedSumCon forallVars context pos arity field)
         else do
           firstField <- constructorArgParser
           mSep <- MP.optional (MP.try ((Left () <$ expectedTok TkSpecialComma) <|> (Right () <$ expectedTok TkReservedPipe)))
           case mSep of
             Nothing -> do
               expectedTok TkSpecialUnboxedRParen
-              pure $ \span' -> DataConAnn (mkAnnotation span') (TupleCon forallVars context Unboxed [firstField])
+              pure (TupleCon forallVars context Unboxed [firstField])
             Just (Left ()) -> do
               rest <- constructorArgParser `MP.sepBy1` expectedTok TkSpecialComma
               expectedTok TkSpecialUnboxedRParen
-              pure $ \span' -> DataConAnn (mkAnnotation span') (TupleCon forallVars context Unboxed (firstField : rest))
+              pure (TupleCon forallVars context Unboxed (firstField : rest))
             Just (Right ()) -> do
               trailingPipes <- MP.many (expectedTok TkReservedPipe)
               expectedTok TkSpecialUnboxedRParen
               let arity = 1 + 1 + length trailingPipes
-              pure $ \span' -> DataConAnn (mkAnnotation span') (UnboxedSumCon forallVars context 1 arity firstField)
+              pure (UnboxedSumCon forallVars context 1 arity firstField)
 
 -- | Report core:
 --
@@ -1124,7 +1122,7 @@ gadtWhereClauseParser = whereClauseItemsParser gadtConDeclParser
 
 -- | Parse a GADT constructor declaration: @Con1, Con2 :: forall a. Ctx => Type@
 gadtConDeclParser :: TokParser DataConDecl
-gadtConDeclParser = withSpan $ do
+gadtConDeclParser = withSpanAnn (DataConAnn . mkAnnotation) $ do
   -- Parse constructor names (can be multiple separated by commas)
   names <- gadtConNameParser `MP.sepBy1` expectedTok TkSpecialComma
   expectedTok TkReservedDoubleColon
@@ -1133,8 +1131,7 @@ gadtConDeclParser = withSpan $ do
   -- Parse optional context
   context <- contextPrefixDispatchList
   -- Parse the body (record or prefix style)
-  body <- gadtBodyParser
-  pure $ \span' -> DataConAnn (mkAnnotation span') (GadtCon forallBinders context names body)
+  GadtCon forallBinders context names <$> gadtBodyParser
 
 -- | Parse constructor name for GADT - can be regular or operator in parens
 gadtConNameParser :: TokParser UnqualifiedName
@@ -1431,19 +1428,19 @@ forallBindersParser = do
   expectedTok (TkVarSym ".")
   pure binders
 
-dataConRecordOrPrefixParser :: [TyVarBinder] -> [Type] -> TokParser (SourceSpan -> DataConDecl)
+dataConRecordOrPrefixParser :: [TyVarBinder] -> [Type] -> TokParser DataConDecl
 dataConRecordOrPrefixParser forallVars context = do
   name <- constructorUnqualifiedNameParser <|> parens operatorUnqualifiedNameParser
   mRecordFields <- MP.optional (MP.try recordFieldsParserAfterLayoutSemicolon)
   case mRecordFields of
-    Just fields -> pure (\span' -> DataConAnn (mkAnnotation span') (RecordCon forallVars context name fields))
+    Just fields -> pure (RecordCon forallVars context name fields)
     Nothing -> do
       args <- MP.many constructorArgParser
       -- Ensure we're not leaving a constructor operator unconsumed.
       -- If there's a constructor operator next, this is actually an infix form
       -- and we should backtrack to let dataConInfixParser handle it.
       MP.notFollowedBy constructorOperatorParser
-      pure (\span' -> DataConAnn (mkAnnotation span') (PrefixCon forallVars context name args))
+      pure (PrefixCon forallVars context name args)
   where
     -- Layout may inject a virtual ';' before a newline-started record field block.
     -- Accept it as part of the constructor declaration.
@@ -1451,12 +1448,11 @@ dataConRecordOrPrefixParser forallVars context = do
       recordFieldsParser
         <|> (expectedTok TkSpecialSemicolon *> recordFieldsParser)
 
-dataConInfixParser :: [TyVarBinder] -> [Type] -> TokParser (SourceSpan -> DataConDecl)
+dataConInfixParser :: [TyVarBinder] -> [Type] -> TokParser DataConDecl
 dataConInfixParser forallVars context = do
   lhs <- infixConstructorArgParser
   op <- constructorOperatorUnqualifiedNameParser <|> backtickConstructorUnqualifiedParser
-  rhs <- infixConstructorArgParser
-  pure (\span' -> DataConAnn (mkAnnotation span') (InfixCon forallVars context lhs op rhs))
+  InfixCon forallVars context lhs op <$> infixConstructorArgParser
   where
     backtickConstructorUnqualifiedParser = do
       expectedTok TkSpecialBacktick

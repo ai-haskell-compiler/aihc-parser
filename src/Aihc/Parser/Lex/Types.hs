@@ -297,11 +297,7 @@ data LayoutState = LayoutState
     layoutPendingLayout :: !(Maybe PendingLayout),
     layoutPrevTokenKind :: !(Maybe LexTokenKind),
     layoutModuleMode :: !ModuleLayoutMode,
-    -- | End span of the last token that came from the source, or
-    -- 'NoSourceSpan' before the first one.  A bare 'SourceSpan' rather than a
-    -- 'Maybe' one: the layout state is rebuilt for every token, so the
-    -- @Just@ box was allocated once per token for nothing.
-    layoutPrevTokenEndSpan :: !SourceSpan,
+    layoutPrevTokenEndSpan :: !(Maybe SourceSpan),
     layoutBuffer :: [LexToken],
     layoutNondecreasingIndent :: !Bool,
     layoutLambdaCase :: !Bool
@@ -349,7 +345,7 @@ mkInitialLayoutState enableModuleLayout exts =
         if enableModuleLayout
           then ModuleLayoutSeekStart
           else ModuleLayoutOff,
-      layoutPrevTokenEndSpan = NoSourceSpan,
+      layoutPrevTokenEndSpan = Nothing,
       layoutBuffer = [],
       layoutNondecreasingIndent = Syntax.NondecreasingIndentation `elem` exts,
       layoutLambdaCase = Syntax.LambdaCase `elem` exts
@@ -460,10 +456,7 @@ skipWhitespace st =
    in go 0 (lexerLine st) (lexerCol st) (lexerByteOffset st) (lexerAtLineStart st)
 
 tokenStartCol :: LexToken -> Int
-tokenStartCol tok =
-  case lexTokenSpan tok of
-    SourceSpan {sourceSpanStartCol = col} -> col
-    NoSourceSpan -> 1
+tokenStartCol tok = sourceSpanStartCol (lexTokenSpan tok)
 
 virtualSymbolToken :: Text -> SourceSpan -> LexToken
 virtualSymbolToken sym span' =

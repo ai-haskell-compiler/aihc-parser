@@ -8,18 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Remove the `NoSourceSpan` constructor and `noSourceSpan`. A `SourceSpan` is
+  now always a concrete span. Parsed syntax gets the span of the tokens it
+  consumed, or the zero-width span where the parser stands when it consumed
+  none. Every parse error has a span too: an error that names no token, such
+  as one raised with `fail`, is located at the token the parser stood on when
+  it was raised.
 - `sourceSpanSourceName` is now a `Text` rather than a `FilePath`. Callers
   that read the field get a `Text`; callers that build a `SourceSpan` by hand
   pass a `Text`. The name given as `parserSourceName` is still a `FilePath`
   and is converted once when lexing starts.
 - `SourceSpan` is now a bidirectional record pattern synonym over a packed
-  representation. Constructing a span, matching on one and reading any of its
-  seven fields all work exactly as before; what no longer compiles is record
-  *update* syntax (`span {sourceSpanStartLine = n}`), which pattern synonyms
-  do not support, and code that relies on the `Data` instance seeing seven
-  `Int` fields. Import it as `SourceSpan (NoSourceSpan), pattern SourceSpan`
-  plus the field names, since `SourceSpan (..)` no longer brings the fields
-  into scope.
+  representation. Constructing a span, matching on one, reading a field and
+  record-update syntax all work exactly as before. Two things change: import
+  it as `SourceSpan, pattern SourceSpan` plus the field names you use, since
+  `SourceSpan (..)` no longer brings the fields into scope, and the `Data`
+  instance sees three `Word64` fields rather than six `Int` ones.
 - `applyImpliedExtensions` returns its result in `Extension` constructor order
   and without duplicates when it has anything to add, rather than in
   most-recently-enabled-first order. Only membership was ever meaningful; a
@@ -27,12 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Performance
 
-- `SourceSpan` is a flat, packed record: the source name is a `Text` shared by
-  every span from the same file, and the six positions live in three unboxed
-  `Word64` fields instead of six `Int` ones. Forcing a span with `rnf` is now
-  constant time instead of walking the source name character by character,
-  which a consumer that `deepseq`s a parse tree paid once per span, and the
-  most numerous object in a parse tree is a third smaller.
+- A `SourceSpan` holds its six positions in three unboxed `Word64` fields
+  rather than six `Int` ones, two positions to a word. It is the most numerous
+  object in a parse tree, so a third off its size shows up in peak heap as
+  well as in allocation.
 - Expression parsing dispatches the block forms (`do`, `mdo`, qualified `do`,
   `if`, `case`, `let`, `proc`, `\`) and prefix negation on the next token
   instead of trying them in turn. Each block form starts with its own
@@ -46,9 +48,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   on lists, so closing a set costs word operations rather than a `filter` per
   implication and a pair of `sort`s per round. It ran once per file.
 
-Together these cut the `bench-aihc-base` benchmark's allocation by about 21%
-(2.90 GB to 2.30 GB over five iterations), its wall time by about 12%
-(162 ms to 142 ms per iteration) and its peak heap by about 10%.
+Together these cut the `bench-aihc-base` benchmark's allocation by about 20%
+(2.93 GB to 2.34 GB over five iterations), its wall time by about 12%
+(152 ms to 134 ms per iteration) and its peak heap by about 20%
+(21.4 MB to 17.1 MB).
 
 ## [3.0.1.1] - 2026-09-15
 

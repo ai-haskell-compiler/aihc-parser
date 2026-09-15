@@ -102,14 +102,8 @@ lpatParser =
 buildPatternApp :: Pattern -> Pattern -> Pattern
 buildPatternApp lhs rhs =
   case peelPatternAnn lhs of
-    PCon name typeArgs args ->
-      PAnn
-        (mkAnnotation NoSourceSpan)
-        (PCon name typeArgs (args <> [rhs]))
-    PBuiltinCon con typeArgs args ->
-      PAnn
-        (mkAnnotation NoSourceSpan)
-        (PBuiltinCon con typeArgs (args <> [rhs]))
+    PCon name typeArgs args -> PCon name typeArgs (args <> [rhs])
+    PBuiltinCon con typeArgs args -> PBuiltinCon con typeArgs (args <> [rhs])
     _ -> lhs
 
 -- | Parse an atomic pattern (@apat@ in the Haskell Report).
@@ -304,8 +298,8 @@ varOrConPatternParser = do
       | isConLikeName name && lexTokenKind nextTok == TkSpecialLBrace -> do
           (fields, hasWildcard) <- braces recordPatternFieldListParser
           endInput <- MP.getInput
-          let endSpan = tokStreamPrevSpan endInput
-              recordSpan = mergeSourceSpans (lexTokenSpan tok) endSpan
+          let startSpan = lexTokenSpan tok
+              recordSpan = maybe startSpan (mergeSourceSpans startSpan . lexTokenSpan) (tokStreamPrevToken endInput)
           pure (PAnn (mkAnnotation recordSpan) (PRecord name fields hasWildcard))
     _ ->
       pure $

@@ -87,7 +87,7 @@ module Aihc.Parser.Syntax
     Role (..),
     RoleAnnotation (..),
     Rhs (..),
-    SourceSpan (NoSourceSpan),
+    SourceSpan,
     pattern SourceSpan,
     sourceSpanSourceName,
     sourceSpanStartLine,
@@ -130,7 +130,6 @@ module Aihc.Parser.Syntax
     gadtBodyResultType,
     languageEditionExtensions,
     editionFromExtensionSettings,
-    noSourceSpan,
     mergeSourceSpans,
     mkName,
     mkUnqualifiedName,
@@ -723,8 +722,12 @@ effectiveExtensions edition = List.foldl' applyOne (languageEditionExtensions ed
     applyOne extensions setting@(EnableExtension _) = applyImpliedExtensions (applyExtensionSetting setting extensions)
     applyOne extensions setting@(DisableExtension _) = applyExtensionSetting setting extensions
 
--- | Source location metadata for parsed syntax.
--- Example: the span covering @map@ in @map f xs@.
+-- | Source location metadata for parsed syntax, such as the token range for
+-- @map@ in @map f xs@.
+--
+-- A span is always concrete. Syntax without a location carries no
+-- 'SourceSpan' annotation at all, so consumers read a span with
+-- 'fromAnnotation' and treat its absence as the missing case.
 --
 -- A span is flat: the source name is a 'Text' that every span from the same
 -- file shares, and the positions are unboxed, so a span in weak head normal
@@ -735,7 +738,7 @@ effectiveExtensions edition = List.foldl' applyOne (languageEditionExtensions ed
 -- word.  A span is a third smaller as a result, which matters because it is
 -- the single most numerous heap object in a parse tree.  The packing is an
 -- implementation detail: the 'SourceSpan' pattern synonym below constructs
--- and matches spans in terms of the seven logical fields.
+-- and matches spans in terms of the same seven fields as before.
 --
 -- Six @{-\# UNPACK \#-} !Word32@ fields would give exactly the same five-word
 -- closure, because GHC packs unpacked sub-word fields two to a machine word,
@@ -743,10 +746,7 @@ effectiveExtensions edition = List.foldl' applyOne (languageEditionExtensions ed
 -- the @bench-aihc-base@ benchmark at byte-identical allocation, so the
 -- explicit packing stays.
 data SourceSpan
-  = -- | No location information is available.
-    NoSourceSpan
-  | -- | A concrete span such as the token range for @map@ in @map f xs@.
-    PackedSourceSpan
+  = PackedSourceSpan
       -- | The file the span refers to, as given to the parser or by a
       -- @LINE@ pragma or @#line@ directive.
       !Text
@@ -787,7 +787,7 @@ pattern SourceSpan
         (packPositions endLine endCol)
         (packPositions startOffset endOffset)
 
-{-# COMPLETE NoSourceSpan, SourceSpan #-}
+{-# COMPLETE SourceSpan #-}
 
 packPositions :: Int -> Int -> Word64
 packPositions high low =
@@ -795,11 +795,16 @@ packPositions high low =
 {-# INLINE packPositions #-}
 
 unpackPositions :: Word64 -> (Int, Int)
-unpackPositions word =
-  ( fromIntegral (word `shiftR` 32),
-    fromIntegral (word .&. 0xffffffff)
-  )
+unpackPositions word = (highPosition word, lowPosition word)
 {-# INLINE unpackPositions #-}
+
+highPosition :: Word64 -> Int
+highPosition word = fromIntegral (word `shiftR` 32)
+{-# INLINE highPosition #-}
+
+lowPosition :: Word64 -> Int
+lowPosition word = fromIntegral (word .&. 0xffffffff)
+{-# INLINE lowPosition #-}
 
 -- | Every field is strict and none of them holds a thunk once the span is in
 -- weak head normal form, so forcing the span is all there is to do.
@@ -807,7 +812,6 @@ instance NFData SourceSpan where
   rnf span' = span' `seq` ()
 
 instance Show SourceSpan where
-  show NoSourceSpan = "NoSourceSpan"
   show SourceSpan {sourceSpanStartLine, sourceSpanStartCol, sourceSpanEndLine, sourceSpanEndCol} =
     "SourceSpan "
       ++ show sourceSpanStartLine
@@ -818,18 +822,17 @@ instance Show SourceSpan where
       ++ " "
       ++ show sourceSpanEndCol
 
-noSourceSpan :: SourceSpan
-noSourceSpan = NoSourceSpan
-
+-- | The span from the start of the first span to the end of the second.
+-- The source name comes from the first span.
 mergeSourceSpans :: SourceSpan -> SourceSpan -> SourceSpan
-mergeSourceSpans left right =
-  case (left, right) of
-    ( SourceSpan name l1 c1 _ _ startOffset _,
-      SourceSpan _ _ _ l2 c2 _ endOffset
-      ) ->
-        SourceSpan name l1 c1 l2 c2 startOffset endOffset
-    (NoSourceSpan, span') -> span'
-    (span', NoSourceSpan) -> span'
+mergeSourceSpans
+  (PackedSourceSpan name start _ startOffsets)
+  (PackedSourceSpan _ _ end endOffsets) =
+    PackedSourceSpan
+      name
+      start
+      end
+      (packPositions (highPosition startOffsets) (lowPosition endOffsets))
 
 -- | A qualified or unqualified name with type information.
 --
@@ -2105,7 +2108,7 @@ fromAnnotation (DynamicAnnotation value) = fromDynamic value
 
 instance Data Annotation where
   gfoldl _ z = z
-  gunfold _ z _ = z (SourceSpanAnnotation NoSourceSpan)
+  gunfold _ z _ = z (DynamicAnnotation (toDyn ()))
   toConstr _ = annotationConstr
   dataTypeOf _ = annotationDataType
 
