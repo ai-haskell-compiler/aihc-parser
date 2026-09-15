@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeFamilies #-}
 
 module Aihc.Parser.Types
@@ -35,7 +36,7 @@ import Aihc.Parser.Lex
     readModuleHeaderExtensions,
     scanAllTokens,
   )
-import Aihc.Parser.Syntax (Extension, ExtensionSet, SourceSpan (..), applyExtensionSetting, applyImpliedExtensions, mkExtensionSet)
+import Aihc.Parser.Syntax (Extension, ExtensionSet, SourceSpan, applyExtensionSetting, applyImpliedExtensions, mkExtensionSet, sourceSpanEndCol, sourceSpanEndLine, sourceSpanEndOffset, sourceSpanSourceName, sourceSpanStartCol, sourceSpanStartLine, sourceSpanStartOffset, pattern SourceSpan)
 import Control.DeepSeq (NFData (..))
 import Data.Text (Text)
 import Data.Text qualified as T

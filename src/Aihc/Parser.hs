@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 -- |
 -- Module      : Aihc.Parser
@@ -38,7 +39,7 @@ import Aihc.Parser.Internal.Module (moduleParser)
 import Aihc.Parser.Internal.Pattern (patternParser)
 import Aihc.Parser.Internal.Type (typeParser, typeSignatureParser)
 import Aihc.Parser.Pretty ()
-import Aihc.Parser.Syntax (Decl, Expr, Extension, Module (..), Pattern, SourceSpan (..), Type, applyImpliedExtensions)
+import Aihc.Parser.Syntax (Decl, Expr, Extension, Module (..), Pattern, SourceSpan, Type, applyImpliedExtensions, sourceSpanEndCol, sourceSpanSourceName, sourceSpanStartCol, sourceSpanStartLine, sourceSpanStartOffset, pattern SourceSpan)
 import Aihc.Parser.Types
 import Data.ByteString qualified as BS
 import Data.List qualified as List

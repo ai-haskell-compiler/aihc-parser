@@ -1,6 +1,8 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE ViewPatterns #-}
 
 -- |
 --
@@ -85,7 +87,15 @@ module Aihc.Parser.Syntax
     Role (..),
     RoleAnnotation (..),
     Rhs (..),
-    SourceSpan (..),
+    SourceSpan,
+    pattern SourceSpan,
+    sourceSpanSourceName,
+    sourceSpanStartLine,
+    sourceSpanStartCol,
+    sourceSpanEndLine,
+    sourceSpanEndCol,
+    sourceSpanStartOffset,
+    sourceSpanEndOffset,
     StandaloneDerivingDecl (..),
     Type (..),
     TupleFlavor (..),
@@ -159,14 +169,13 @@ module Aihc.Parser.Syntax
 where
 
 import Control.DeepSeq (NFData (..))
-import Data.Bits (setBit, testBit)
+import Data.Bits (clearBit, countTrailingZeros, setBit, shiftL, shiftR, testBit, (.&.), (.|.))
 import Data.Char (GeneralCategory (..), generalCategory)
 import Data.Data (Constr, Data (..), DataType, Fixity (Prefix), mkConstr, mkDataType)
 import Data.Dynamic (Dynamic, Typeable, fromDynamic, toDyn)
-import Data.List (sort)
 import Data.List qualified as List
 import Data.Map qualified as Map
-import Data.Maybe (fromMaybe, mapMaybe)
+import Data.Maybe (fromMaybe)
 import Data.String (IsString (..))
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -343,14 +352,37 @@ data ExtensionSet = ExtensionSet !Word64 !Word64 !Word64
   deriving anyclass (NFData)
 
 mkExtensionSet :: [Extension] -> ExtensionSet
-mkExtensionSet = List.foldl' insertExtension (ExtensionSet 0 0 0)
+mkExtensionSet = List.foldl' (flip insertExtension) emptyExtensionSet
+
+emptyExtensionSet :: ExtensionSet
+emptyExtensionSet = ExtensionSet 0 0 0
+
+insertExtension :: Extension -> ExtensionSet -> ExtensionSet
+insertExtension ext (ExtensionSet low middle high) =
+  case fromEnum ext `quotRem` 64 of
+    (0, bit) -> ExtensionSet (setBit low bit) middle high
+    (1, bit) -> ExtensionSet low (setBit middle bit) high
+    (2, bit) -> ExtensionSet low middle (setBit high bit)
+    _ -> error "insertExtension: extension enum exceeds bitset capacity"
+
+deleteExtension :: Extension -> ExtensionSet -> ExtensionSet
+deleteExtension ext (ExtensionSet low middle high) =
+  case fromEnum ext `quotRem` 64 of
+    (0, bit) -> ExtensionSet (clearBit low bit) middle high
+    (1, bit) -> ExtensionSet low (clearBit middle bit) high
+    (2, bit) -> ExtensionSet low middle (clearBit high bit)
+    _ -> error "deleteExtension: extension enum exceeds bitset capacity"
+
+-- | The members of the set, in 'Extension' constructor order.
+extensionSetToList :: ExtensionSet -> [Extension]
+extensionSetToList (ExtensionSet low middle high) =
+  wordMembers 0 low (wordMembers 64 middle (wordMembers 128 high []))
   where
-    insertExtension (ExtensionSet low middle high) ext =
-      case fromEnum ext `quotRem` 64 of
-        (0, bit) -> ExtensionSet (setBit low bit) middle high
-        (1, bit) -> ExtensionSet low (setBit middle bit) high
-        (2, bit) -> ExtensionSet low middle (setBit high bit)
-        _ -> error "mkExtensionSet: extension enum exceeds bitset capacity"
+    wordMembers base word rest
+      | word == 0 = rest
+      | otherwise =
+          let bit = countTrailingZeros word
+           in toEnum (base + bit) : wordMembers base (clearBit word bit) rest
 
 memberExtension :: Extension -> ExtensionSet -> Bool
 memberExtension ext (ExtensionSet low middle high) =
@@ -654,11 +686,31 @@ applyExtensionSetting setting extensions =
 impliedExtensionMap :: Map.Map Extension [ExtensionSetting]
 impliedExtensionMap = Map.fromList impliedExtensions
 
+-- | Close a set of extensions under 'impliedExtensions'.
+--
+-- The fixpoint runs on the 'ExtensionSet' bitset rather than on the list:
+-- enabling or disabling one extension is then a word operation instead of a
+-- filter over every extension already enabled, and comparing two rounds is a
+-- comparison of three words instead of sorting two lists.  The result is
+-- returned in 'Extension' constructor order; only membership is meaningful,
+-- and the caller's own list is handed back untouched when it is already
+-- closed.
 applyImpliedExtensions :: [Extension] -> [Extension]
-applyImpliedExtensions extensions =
-  let settings = concat $ mapMaybe (`Map.lookup` impliedExtensionMap) extensions
-      newExtensions = foldr applyExtensionSetting extensions settings
-   in if sort newExtensions == sort extensions then extensions else applyImpliedExtensions newExtensions
+applyImpliedExtensions extensions
+  | closure == initial = extensions
+  | otherwise = extensionSetToList closure
+  where
+    initial = mkExtensionSet extensions
+    closure = go initial
+    go current =
+      let settings = concatMap impliedBy (extensionSetToList current)
+          next = foldr applySettingToSet current settings
+       in if next == current then current else go next
+    impliedBy ext = Map.findWithDefault [] ext impliedExtensionMap
+
+applySettingToSet :: ExtensionSetting -> ExtensionSet -> ExtensionSet
+applySettingToSet (EnableExtension ext) = insertExtension ext
+applySettingToSet (DisableExtension ext) = deleteExtension ext
 
 -- | Apply 'LANGUAGE' settings left to right, the order GHC applies them in,
 -- so that a later setting overrides an earlier one. Implications are applied
@@ -677,21 +729,82 @@ effectiveExtensions edition = List.foldl' applyOne (languageEditionExtensions ed
 -- 'SourceSpan' annotation at all, so consumers read a span with
 -- 'fromAnnotation' and treat its absence as the missing case.
 --
--- A span is a flat record: the source name is a 'Text' that every span from
--- the same file shares, and the positions are unboxed, so a span in weak head
--- normal form is already in normal form and 'rnf' on it is constant time.
-data SourceSpan = SourceSpan
-  { -- | The file the span refers to, as given to the parser or by a
-    -- @LINE@ pragma or @#line@ directive.
-    sourceSpanSourceName :: !Text,
-    sourceSpanStartLine :: {-# UNPACK #-} !Int,
-    sourceSpanStartCol :: {-# UNPACK #-} !Int,
-    sourceSpanEndLine :: {-# UNPACK #-} !Int,
-    sourceSpanEndCol :: {-# UNPACK #-} !Int,
-    sourceSpanStartOffset :: {-# UNPACK #-} !Int,
-    sourceSpanEndOffset :: {-# UNPACK #-} !Int
-  }
+-- A span is flat: the source name is a 'Text' that every span from the same
+-- file shares, and the positions are unboxed, so a span in weak head normal
+-- form is already in normal form and 'rnf' on it is constant time.
+--
+-- Line, column and byte-offset numbers are non-negative and far below @2^32@
+-- even for machine-generated sources, so the six of them are packed two to a
+-- word.  A span is a third smaller as a result, which matters because it is
+-- the single most numerous heap object in a parse tree.  The packing is an
+-- implementation detail: the 'SourceSpan' pattern synonym below constructs
+-- and matches spans in terms of the same seven fields as before.
+--
+-- Six @{-\# UNPACK \#-} !Word32@ fields would give exactly the same five-word
+-- closure, because GHC packs unpacked sub-word fields two to a machine word,
+-- and would need no shifting here.  It was measured and is about 3% slower on
+-- the @bench-aihc-base@ benchmark at byte-identical allocation, so the
+-- explicit packing stays.
+data SourceSpan
+  = PackedSourceSpan
+      -- | The file the span refers to, as given to the parser or by a
+      -- @LINE@ pragma or @#line@ directive.
+      !Text
+      -- | Start line in the high half, start column in the low half.
+      {-# UNPACK #-} !Word64
+      -- | End line in the high half, end column in the low half.
+      {-# UNPACK #-} !Word64
+      -- | Start byte offset in the high half, end byte offset in the low half.
+      {-# UNPACK #-} !Word64
   deriving (Data, Eq, Ord, Generic)
+
+-- | A concrete span, in terms of its seven logical fields.
+--
+-- Deriving 'Ord' on the packed representation gives the same ordering as
+-- deriving it on these fields, because each pair is packed most-significant
+-- component first and in the same order.
+pattern SourceSpan ::
+  Text -> Int -> Int -> Int -> Int -> Int -> Int -> SourceSpan
+pattern SourceSpan
+  { sourceSpanSourceName,
+    sourceSpanStartLine,
+    sourceSpanStartCol,
+    sourceSpanEndLine,
+    sourceSpanEndCol,
+    sourceSpanStartOffset,
+    sourceSpanEndOffset
+  } <-
+  PackedSourceSpan
+    sourceSpanSourceName
+    (unpackPositions -> (sourceSpanStartLine, sourceSpanStartCol))
+    (unpackPositions -> (sourceSpanEndLine, sourceSpanEndCol))
+    (unpackPositions -> (sourceSpanStartOffset, sourceSpanEndOffset))
+  where
+    SourceSpan name startLine startCol endLine endCol startOffset endOffset =
+      PackedSourceSpan
+        name
+        (packPositions startLine startCol)
+        (packPositions endLine endCol)
+        (packPositions startOffset endOffset)
+
+{-# COMPLETE SourceSpan #-}
+
+packPositions :: Int -> Int -> Word64
+packPositions high low =
+  (fromIntegral high `shiftL` 32) .|. (fromIntegral low .&. 0xffffffff)
+{-# INLINE packPositions #-}
+
+unpackPositions :: Word64 -> (Int, Int)
+unpackPositions word = (highPosition word, lowPosition word)
+{-# INLINE unpackPositions #-}
+
+highPosition :: Word64 -> Int
+highPosition word = fromIntegral (word `shiftR` 32)
+{-# INLINE highPosition #-}
+
+lowPosition :: Word64 -> Int
+lowPosition word = fromIntegral (word .&. 0xffffffff)
+{-# INLINE lowPosition #-}
 
 -- | Every field is strict and none of them holds a thunk once the span is in
 -- weak head normal form, so forcing the span is all there is to do.
@@ -712,12 +825,14 @@ instance Show SourceSpan where
 -- | The span from the start of the first span to the end of the second.
 -- The source name comes from the first span.
 mergeSourceSpans :: SourceSpan -> SourceSpan -> SourceSpan
-mergeSourceSpans left right =
-  left
-    { sourceSpanEndLine = sourceSpanEndLine right,
-      sourceSpanEndCol = sourceSpanEndCol right,
-      sourceSpanEndOffset = sourceSpanEndOffset right
-    }
+mergeSourceSpans
+  (PackedSourceSpan name start _ startOffsets)
+  (PackedSourceSpan _ _ end endOffsets) =
+    PackedSourceSpan
+      name
+      start
+      end
+      (packPositions (highPosition startOffsets) (lowPosition endOffsets))
 
 -- | A qualified or unqualified name with type information.
 --
