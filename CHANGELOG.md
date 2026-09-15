@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- The CPP preprocessor benchmark. `BENCHMARKS.md` no longer carries a "CPP
+  Performance" table comparing `aihc-cpp` against `clang -E` and `cpphs`, and
+  `aihc-parser-bench` no longer depends on `cpphs` or shells out to `clang`.
+  `aihc-cpp` is still used to preprocess the parser corpus before measurement;
+  only its benchmark is gone.
+
 ### Changed
 
 - Remove the `NoSourceSpan` constructor and `noSourceSpan`. A `SourceSpan` is

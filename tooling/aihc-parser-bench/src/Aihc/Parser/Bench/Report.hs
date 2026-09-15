@@ -1,7 +1,7 @@
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Markdown report generation for relative Stackage parser and CPP benchmarks.
+-- | Markdown report generation for relative Stackage parser benchmarks.
 module Aihc.Parser.Bench.Report
   ( ParserResult (..),
     renderParserRatioRow,
@@ -22,7 +22,6 @@ import Aihc.Parser.Bench.Parsers
     parseWithAihcExtsWithCpp,
     parseWithGhcExtsWithCpp,
     prepareSourceAndExtensionsWithCpp,
-    runCppWithIncludes,
   )
 import Aihc.Parser.Bench.Tarball
   ( TarballEntry (..),
@@ -32,10 +31,10 @@ import Aihc.Parser.Bench.Tarball
   )
 import Aihc.Parser.Syntax qualified as Syntax
 import Control.DeepSeq (deepseq)
-import Control.Exception (SomeException, bracket, evaluate, try)
-import Control.Monad (forM_, unless, void)
+import Control.Exception (SomeException, evaluate, try)
+import Control.Monad (unless)
 import Data.ByteString qualified as BS
-import Data.List (nub, stripPrefix)
+import Data.List (nub)
 import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -43,25 +42,16 @@ import Data.Text.Encoding qualified as TE
 import Data.Text.IO qualified as TIO
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stats qualified as Stats
-import Language.Preprocessor.Cpphs (BoolOptions (..), CpphsOptions (..), defaultCpphsOptions, parseOptions, runCpphs)
-import System.Directory
-  ( createDirectoryIfMissing,
-    getTemporaryDirectory,
-    removePathForcibly,
-  )
 import System.Environment (getExecutablePath)
 import System.Exit (ExitCode (..))
-import System.FilePath (isRelative, splitDirectories, takeDirectory, (</>))
-import System.IO (IOMode (WriteMode), hPutStrLn, stderr, withFile)
+import System.IO (hPutStrLn, stderr)
 import System.Mem (performMajorGC)
-import System.Process (StdStream (..), createProcess, proc, readProcessWithExitCode, std_err, std_out, waitForProcess)
+import System.Process (readProcessWithExitCode)
 import Text.Printf (printf)
 import Text.Read (readMaybe)
 
 data Corpus = Corpus
-  { corpusEntries :: ![TarballEntry],
-    corpusHaskellEntries :: ![TarballEntry],
-    corpusCppEntries :: ![TarballEntry],
+  { corpusHaskellEntries :: ![TarballEntry],
     corpusIncludeMap :: !(Map.Map FilePath Text),
     corpusPackageCount :: !Int,
     corpusFileCount :: !Int,
@@ -72,11 +62,6 @@ data Corpus = Corpus
 data Timed a = Timed
   { timedResult :: !a,
     timedNanos :: !Integer
-  }
-
-data ToolResult = ToolResult
-  { toolName :: !String,
-    toolNanos :: !Integer
   }
 
 data ParserResult = ParserResult
@@ -97,20 +82,6 @@ runReport opts@ReportOptions {reportOutput} = do
   ghcParser <- benchmarkParserSubprocess opts ParserGhc
   aihcParser <- benchmarkParserSubprocess opts ParserAihc
 
-  hPutStrLn stderr "Staging corpus for external preprocessors..."
-  clangResult <-
-    withStagedCorpus (corpusEntries corpus) $ \root -> do
-      hPutStrLn stderr "Benchmarking clang -E..."
-      benchmarkClang root (corpusCppEntries corpus)
-
-  hPutStrLn stderr "Benchmarking cpphs..."
-  cpphsResult <-
-    withStagedCorpus (corpusEntries corpus) $ \root ->
-      benchmarkCpphs root (corpusCppEntries corpus)
-
-  hPutStrLn stderr "Benchmarking aihc-cpp..."
-  aihcCpp <- benchmarkAihcCpp corpus
-
   commit <- currentCommit
   let markdown =
         renderReport
@@ -118,7 +89,6 @@ runReport opts@ReportOptions {reportOutput} = do
           corpus
           commit
           [ghcParser, aihcParser]
-          [clangResult, cpphsResult, aihcCpp]
   TIO.writeFile reportOutput markdown
   hPutStrLn stderr ("Wrote " ++ reportOutput)
 
@@ -146,17 +116,14 @@ loadCorpus ReportOptions {reportSnapshot, reportOffline} = do
     Right (entries, _summary) -> do
       let hsEntries = filter isHaskellEntry entries
           includeMap = Map.fromList [(entryFilePath e, entryContents e) | e <- filter isIncludeEntry entries]
-          cppEntries = filter sourceUsesCpp hsEntries
           packages = nub [entryPackage e | e <- hsEntries]
       pure
         Corpus
-          { corpusEntries = entries,
-            corpusHaskellEntries = hsEntries,
-            corpusCppEntries = cppEntries,
+          { corpusHaskellEntries = hsEntries,
             corpusIncludeMap = includeMap,
             corpusPackageCount = length packages,
             corpusFileCount = length hsEntries,
-            corpusCppFileCount = length cppEntries,
+            corpusCppFileCount = length (filter sourceUsesCpp hsEntries),
             corpusByteCount = sum (map (fromIntegral . entryByteSize) hsEntries)
           }
 
@@ -283,156 +250,6 @@ parseGhc entry =
     (entryDependencies entry)
     (entryContents entry)
 
--- | The three preprocessor benchmarks below all run their corpus
--- sequentially.  What the CPP table reports is single-threaded throughput,
--- and running the tools concurrently measured how well each one overlapped
--- with itself instead -- which flattered @clang -E@, whose work is in
--- subprocesses, over the two in-process Haskell preprocessors.  Sequential
--- also keeps the numbers reproducible rather than dependent on the core count
--- of whoever regenerated the report.
-benchmarkAihcCpp :: Corpus -> IO ToolResult
-benchmarkAihcCpp Corpus {corpusCppEntries, corpusIncludeMap} = do
-  timed <-
-    timeAction $
-      forM_ corpusCppEntries $ \entry -> do
-        let output =
-              runCppWithIncludes
-                corpusIncludeMap
-                (entryFilePath entry)
-                (entryCppOptions entry)
-                (entryDependencies entry)
-                (entryContents entry)
-        evaluate (output `deepseq` ())
-  pure ToolResult {toolName = "aihc-cpp", toolNanos = timedNanos timed}
-
-benchmarkCpphs :: FilePath -> [TarballEntry] -> IO ToolResult
-benchmarkCpphs root entries = do
-  timed <-
-    timeAction $
-      forM_ entries $ \entry -> do
-        result <-
-          try
-            ( do
-                let stagedPath = root </> entryFilePath entry
-                    options = cpphsOptionsFor root entry
-                out <- runCpphs options stagedPath (T.unpack (entryContents entry))
-                evaluate (length out)
-            ) ::
-            IO (Either SomeException Int)
-        case result of
-          Left _ -> pure ()
-          Right n -> void (evaluate n)
-  pure ToolResult {toolName = "cpphs", toolNanos = timedNanos timed}
-
-cpphsOptionsFor :: FilePath -> TarballEntry -> CpphsOptions
-cpphsOptionsFor root entry =
-  case parseOptions (stagedCppOptions root entry) of
-    Left _ -> baseOptions
-    Right options ->
-      options
-        { boolopts =
-            (boolopts options)
-              { stripC89 = True,
-                warnings = False
-              }
-        }
-  where
-    baseOptions =
-      defaultCpphsOptions
-        { boolopts =
-            (boolopts defaultCpphsOptions)
-              { stripC89 = True,
-                warnings = False
-              }
-        }
-
-benchmarkClang :: FilePath -> [TarballEntry] -> IO ToolResult
-benchmarkClang root entries = do
-  let groups = Map.toList (Map.fromListWith (<>) [(stagedCppOptions root entry, [entry]) | entry <- entries])
-      chunks =
-        concat
-          [ let baseArgs = ["-E", "-P", "-x", "assembler-with-cpp"] ++ cppOptions
-                paths = map ((root </>) . entryFilePath) group
-             in [(baseArgs, chunk) | chunk <- chunkArgs baseArgs paths]
-          | (cppOptions, group) <- groups
-          ]
-  timed <-
-    timeAction $
-      forM_ chunks $ \(baseArgs, chunk) ->
-        runExternal "clang" (baseArgs ++ chunk)
-  pure ToolResult {toolName = "clang -E", toolNanos = timedNanos timed}
-
-stagedCppOptions :: FilePath -> TarballEntry -> [String]
-stagedCppOptions root entry =
-  rewrite (entryCppOptions entry)
-  where
-    packageRoot = root </> entryPackageRoot entry
-    rewrite ("-I" : path : rest) = "-I" : stageIncludePath path : rewrite rest
-    rewrite (opt : rest)
-      | Just path <- stripPrefix "-I" opt = ("-I" ++ stageIncludePath path) : rewrite rest
-      | otherwise = opt : rewrite rest
-    rewrite [] = []
-    stageIncludePath path
-      | isRelative path = packageRoot </> path
-      | otherwise = path
-
-entryPackageRoot :: TarballEntry -> FilePath
-entryPackageRoot entry =
-  case splitDirectories (entryFilePath entry) of
-    packageDir : _ -> packageDir
-    [] -> "."
-
-chunkArgs :: [String] -> [FilePath] -> [[FilePath]]
-chunkArgs baseArgs = go [] baseSize
-  where
-    maxChars = 20000
-    baseSize = sum (map length baseArgs) + length baseArgs
-    go [] _ [] = []
-    go current _ [] = [reverse current]
-    go current currentSize (path : paths)
-      | not (null current) && currentSize + pathSize > maxChars =
-          reverse current : go [path] (baseSize + pathSize) paths
-      | otherwise =
-          go (path : current) (currentSize + pathSize) paths
-      where
-        pathSize = length path + 1
-
-runExternal :: FilePath -> [String] -> IO ()
-runExternal exe args = do
-  result <-
-    try
-      ( withFile "/dev/null" WriteMode $ \devNull -> do
-          (_, _, _, handle) <-
-            createProcess
-              (proc exe args)
-                { std_out = UseHandle devNull,
-                  std_err = UseHandle devNull
-                }
-          waitForProcess handle
-      ) ::
-      IO (Either SomeException ExitCode)
-  case result of
-    Left err -> fail (exe ++ " failed to start: " ++ show err)
-    Right ExitSuccess ->
-      pure ()
-    Right (ExitFailure code) ->
-      void (evaluate code)
-
-withStagedCorpus :: [TarballEntry] -> (FilePath -> IO a) -> IO a
-withStagedCorpus entries action = do
-  tmp <- getTemporaryDirectory
-  stamp <- getMonotonicTimeNSec
-  let root = tmp </> ("aihc-bench-corpus-" ++ show stamp)
-  bracket
-    (createDirectoryIfMissing True root >> pure root)
-    removePathForcibly
-    $ \dir -> do
-      forM_ entries $ \entry -> do
-        let path = dir </> entryFilePath entry
-        createDirectoryIfMissing True (takeDirectory path)
-        TIO.writeFile path (entryContents entry)
-      action dir
-
 timeAction :: IO a -> IO (Timed a)
 timeAction action = do
   start <- getMonotonicTimeNSec
@@ -447,8 +264,8 @@ currentCommit = do
     Right (ExitSuccess, out, _) -> trim out
     _ -> "unknown"
 
-renderReport :: ReportOptions -> Corpus -> String -> [ParserResult] -> [ToolResult] -> Text
-renderReport ReportOptions {reportSnapshot} Corpus {corpusPackageCount, corpusFileCount, corpusCppFileCount, corpusByteCount} commit parserResults cppResults =
+renderReport :: ReportOptions -> Corpus -> String -> [ParserResult] -> Text
+renderReport ReportOptions {reportSnapshot} Corpus {corpusPackageCount, corpusFileCount, corpusCppFileCount, corpusByteCount} commit parserResults =
   T.pack $
     unlines $
       [ "# AIHC Benchmarks",
@@ -476,19 +293,6 @@ renderReport ReportOptions {reportSnapshot} Corpus {corpusPackageCount, corpusFi
         "| --- | ---: | ---: | ---: |"
       ]
         ++ map (renderParserRatioRow (parserBaseline "GHC (`ghc-lib-parser`)" parserResults)) parserResults
-        ++ [ "",
-             "## CPP Performance",
-             "",
-             "`clang -E` is the baseline; lower is better.",
-             "",
-             "| Preprocessor | Relative Time |",
-             "| --- | ---: |"
-           ]
-        ++ map (renderRatioRow (baseline "clang -E" cppResults)) cppResults
-
-renderRatioRow :: Integer -> ToolResult -> String
-renderRatioRow baselineNanos ToolResult {toolName, toolNanos} =
-  "| " ++ toolName ++ " | `" ++ formatRelative baselineNanos toolNanos ++ "` |"
 
 renderParserRatioRow :: ParserResult -> ParserResult -> String
 renderParserRatioRow baselineResult result =
@@ -508,15 +312,9 @@ parserBaseline name results =
     result : _ -> result
     [] -> error ("missing benchmark baseline: " ++ name)
 
-baseline :: String -> [ToolResult] -> Integer
-baseline name results =
-  case [toolNanos r | r <- results, toolName r == name] of
-    n : _ -> n
-    [] -> error ("missing benchmark baseline: " ++ name)
-
 -- | Render a measurement as a fraction of the baseline's, so that smaller is
 -- better for every column of the report.  Ratios far below one get extra
--- decimals; two would round the preprocessor rows down to a single digit.
+-- decimals; two would round the smallest ones down to a single digit.
 formatRelative :: Integer -> Integer -> String
 formatRelative 0 _ = "0.00x"
 formatRelative baselineValue candidateValue
