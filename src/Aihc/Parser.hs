@@ -214,7 +214,7 @@ renderSourceReference :: String -> Text -> SourceSpan -> Doc ann
 renderSourceReference origin source srcSpan =
   let (renderedOrigin, lineNo, colNo, endCol, srcLine) = case srcSpan of
         SourceSpan {sourceSpanSourceName, sourceSpanStartLine, sourceSpanStartCol, sourceSpanEndCol, sourceSpanStartOffset} ->
-          ( sourceSpanSourceName,
+          ( T.unpack sourceSpanSourceName,
             sourceSpanStartLine,
             sourceSpanStartCol,
             sourceSpanEndCol,

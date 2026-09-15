@@ -195,14 +195,14 @@ looksLikeHashLineDirective raw =
         c :< _ | isDigit c -> True
         _ -> "line" `T.isPrefixOf` afterHash
 
-parseDirectiveSourceName :: Text -> Maybe FilePath
+parseDirectiveSourceName :: Text -> Maybe Text
 parseDirectiveSourceName rest =
   let rest' = T.dropWhile isSpace rest
    in case rest' of
         '"' :< more ->
           let (name, trailing) = T.break (== '"') more
            in case trailing of
-                '"' :< _ -> Just (T.unpack name)
+                '"' :< _ -> Just name
                 _ -> Nothing
         _ -> Nothing
 

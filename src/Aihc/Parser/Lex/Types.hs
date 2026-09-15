@@ -226,7 +226,7 @@ hasExt ext env = memberExtension ext (lexerExtensions env)
 
 data LexerState = LexerState
   { lexerInput :: !Text,
-    lexerLogicalSourceName :: !FilePath,
+    lexerLogicalSourceName :: !Text,
     lexerLine :: !Int,
     lexerCol :: !Int,
     lexerByteOffset :: !Int,
@@ -307,7 +307,7 @@ data LayoutState = LayoutState
 data DirectiveUpdate = DirectiveUpdate
   { directiveLine :: !(Maybe Int),
     directiveCol :: !(Maybe Int),
-    directiveSourceName :: !(Maybe FilePath)
+    directiveSourceName :: !(Maybe Text)
   }
   deriving (Eq, Show)
 
@@ -325,7 +325,7 @@ mkInitialLexerState sourceName exts input =
   ( mkLexerEnv exts,
     LexerState
       { lexerInput = input,
-        lexerLogicalSourceName = sourceName,
+        lexerLogicalSourceName = T.pack sourceName,
         lexerLine = 1,
         lexerCol = 1,
         lexerByteOffset = 0,
