@@ -464,23 +464,26 @@ stringTextParser =
       TkString txt -> Just txt
       _ -> Nothing
 
--- | The span of the tokens consumed between two parser states: from the first
--- token at the start state to the last token consumed before the end state.
+-- | The span of the tokens consumed between two stream positions, each given
+-- as the stream and its offset: from the first token at the start position to
+-- the last token consumed before the end position. The result is lazy in both
+-- positions, so a caller can attach the span of a deferred parse (see 'lazy')
+-- without forcing that parse.
 --
 -- A parser that consumed nothing gets the zero-width span at the point where
 -- it stands. A stream with no tokens at all has no token to stand at; the
 -- lexer never builds one, since it always ends the stream with 'TkEOF', but a
--- stream built from an explicit token list can be empty. The parser state
--- still knows the source name and the initial position, so the span is then
--- the zero-width span at the start of the input.
-consumedSpan :: MP.State TokStream ParserErrorComponent -> MP.State TokStream ParserErrorComponent -> TokParser SourceSpan
-consumedSpan startState endState =
-  case (inputStartSpan (MP.stateInput startState), lexTokenSpan <$> tokStreamPrevToken (MP.stateInput endState)) of
+-- stream built from an explicit token list can be empty. The span is then the
+-- zero-width span at the given start of the input, which the parser state
+-- knows along with the source name.
+consumedSpan :: MP.SourcePos -> TokStream -> Int -> TokStream -> Int -> SourceSpan
+consumedSpan inputStart startInput startOffset endInput endOffset =
+  case (inputStartSpan startInput, lexTokenSpan <$> tokStreamPrevToken endInput) of
     (Just next, Just prev)
-      | MP.stateOffset endState > MP.stateOffset startState -> pure (mergeSourceSpans next prev)
-      | otherwise -> pure (emptySpanAtStart next)
-    (Just next, Nothing) -> pure (emptySpanAtStart next)
-    (Nothing, Just prev) -> pure (emptySpanAtEnd prev)
+      | endOffset > startOffset -> mergeSourceSpans next prev
+      | otherwise -> emptySpanAtStart next
+    (Just next, Nothing) -> emptySpanAtStart next
+    (Nothing, Just prev) -> emptySpanAtEnd prev
     (Nothing, Nothing) -> spanAtInputStart
   where
     emptySpanAtStart sp =
@@ -495,37 +498,39 @@ consumedSpan startState endState =
           sourceSpanStartCol = sourceSpanEndCol sp,
           sourceSpanStartOffset = sourceSpanEndOffset sp
         }
-    spanAtInputStart = do
-      pos <- MP.pstateSourcePos . MP.statePosState <$> MP.getParserState
-      pure
-        SourceSpan
-          { sourceSpanSourceName = T.pack (MP.sourceName pos),
-            sourceSpanStartLine = MP.unPos (MP.sourceLine pos),
-            sourceSpanStartCol = MP.unPos (MP.sourceColumn pos),
-            sourceSpanEndLine = MP.unPos (MP.sourceLine pos),
-            sourceSpanEndCol = MP.unPos (MP.sourceColumn pos),
-            sourceSpanStartOffset = 0,
-            sourceSpanEndOffset = 0
-          }
-{-# INLINE consumedSpan #-}
+    spanAtInputStart =
+      SourceSpan
+        { sourceSpanSourceName = T.pack (MP.sourceName inputStart),
+          sourceSpanStartLine = MP.unPos (MP.sourceLine inputStart),
+          sourceSpanStartCol = MP.unPos (MP.sourceColumn inputStart),
+          sourceSpanEndLine = MP.unPos (MP.sourceLine inputStart),
+          sourceSpanEndCol = MP.unPos (MP.sourceColumn inputStart),
+          sourceSpanStartOffset = 0,
+          sourceSpanEndOffset = 0
+        }
 
--- | Run a parser and annotate its result with the span of the consumed tokens.
-withSpanAnn :: (SourceSpan -> a -> a) -> TokParser a -> TokParser a
+-- | Run a parser and combine its result with the span of the consumed tokens.
+--
+-- The parser state is read once at each end, and the fields the span needs
+-- are taken out strictly, so the span thunk holds positions rather than the
+-- state. The state's position state references the initial input, and holding
+-- it would keep every token of the file alive until the tree is forced.
+withSpanAnn :: (SourceSpan -> a -> b) -> TokParser a -> TokParser b
 withSpanAnn f parser = do
   startState <- MP.getParserState
+  let !startInput = MP.stateInput startState
+      !startOffset = MP.stateOffset startState
+      !inputStart = MP.pstateSourcePos (MP.statePosState startState)
   out <- parser
   endState <- MP.getParserState
-  parserSpan <- consumedSpan startState endState
-  pure (f parserSpan out)
+  let !endInput = MP.stateInput endState
+      !endOffset = MP.stateOffset endState
+  pure (f (consumedSpan inputStart startInput startOffset endInput endOffset) out)
 {-# INLINE withSpanAnn #-}
 
 -- | Run a parser whose result takes the span of the consumed tokens.
 withSpan :: TokParser (SourceSpan -> a) -> TokParser a
-withSpan parser = do
-  startState <- MP.getParserState
-  out <- parser
-  endState <- MP.getParserState
-  out <$> consumedSpan startState endState
+withSpan = withSpanAnn (\parserSpan out -> out parserSpan)
 {-# INLINE withSpan #-}
 
 -- | The span of the next token, if there is one.

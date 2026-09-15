@@ -382,13 +382,18 @@ appExprParser = appExprParserWith atomOrRecordExprParser
 appExprParserWith :: TokParser Expr -> TokParser Expr
 appExprParserWith atomParser = do
   startState <- MP.getParserState
+  let !startInput = MP.stateInput startState
+      !startOffset = MP.stateOffset startState
+      !inputStart = MP.pstateSourcePos (MP.statePosState startState)
   first <- atomParser
   rest <- MP.many appArg
   case rest of
     [] -> pure first
     _ -> do
       endState <- MP.getParserState
-      appSpan <- consumedSpan startState endState
+      let !endInput = MP.stateInput endState
+          !endOffset = MP.stateOffset endState
+          appSpan = consumedSpan inputStart startInput startOffset endInput endOffset
       pure (EAnn (mkAnnotation appSpan) (foldl applyArg first rest))
   where
     appArg :: TokParser (Either Type Expr)

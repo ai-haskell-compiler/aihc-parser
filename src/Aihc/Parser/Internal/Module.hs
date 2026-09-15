@@ -36,6 +36,9 @@ data RecoverParseStep a
 moduleParser :: TokParser Module
 moduleParser = do
   startState <- MP.getParserState
+  let !startInput = MP.stateInput startState
+      !startOffset = MP.stateOffset startState
+      !inputStart = MP.pstateSourcePos (MP.statePosState startState)
   languagePragmas <- MP.many (languagePragmaParser <* MP.many (expectedTok TkSpecialSemicolon))
   mHeader <- MP.optional (moduleHeaderParser <* MP.many (expectedTok TkSpecialSemicolon))
   expectedTok TkSpecialLBrace
@@ -48,7 +51,7 @@ moduleParser = do
           <* MP.lookAhead eofTok
       )
   MP.updateParserState (\state -> state {MP.stateParseErrors = MP.stateParseErrors finalState})
-  moduleSpan <- consumedSpan startState finalState
+  let moduleSpan = consumedSpan inputStart startInput startOffset (MP.stateInput finalState) (MP.stateOffset finalState)
   pure
     Module
       { moduleAnns = [mkAnnotation moduleSpan],
