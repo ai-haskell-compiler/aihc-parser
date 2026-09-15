@@ -9,6 +9,7 @@ module Aihc.Parser.Bench.CLI
     ReportOptions (..),
     MeasureOptions (..),
     CoverageOptions (..),
+    AihcBaseOptions (..),
     ParserChoice (..),
     OutputFormat (..),
     FilterOptions (..),
@@ -85,6 +86,19 @@ data MeasureOptions = MeasureOptions
   }
   deriving (Eq, Show)
 
+-- | Options for the @aihc-base@ subcommand: a small fixed-corpus benchmark
+-- that parses a pinned checkout of @core-libs/aihc-base@ and forces every
+-- resulting module with @deepseq@.
+data AihcBaseOptions = AihcBaseOptions
+  { -- | Root of the @aihc-base@ source tree to scan for @.hs@ files.
+    aihcBaseSource :: !FilePath,
+    aihcBaseWarmup :: !Int,
+    aihcBaseIterations :: !Int,
+    aihcBaseOutput :: !OutputFormat,
+    aihcBaseGcStats :: !Bool
+  }
+  deriving (Eq, Show)
+
 -- | Options for the coverage subcommand.
 data CoverageOptions = CoverageOptions
   { coverageSnapshot :: !String,
@@ -102,6 +116,7 @@ data Command
   | CmdReport !ReportOptions
   | CmdMeasure !MeasureOptions
   | CmdCoverage !CoverageOptions
+  | CmdAihcBase !AihcBaseOptions
   deriving (Show)
 
 -- | Top-level options.
@@ -146,6 +161,12 @@ commandParser =
           ( info
               (CmdBench <$> benchOptionsParser)
               (progDesc "Benchmark parsing performance on a tarball")
+          )
+        <> command
+          "aihc-base"
+          ( info
+              (CmdAihcBase <$> aihcBaseOptionsParser)
+              (progDesc "Benchmark parsing a pinned checkout of aihc-base, forcing every module")
           )
         <> command
           "report"
@@ -366,4 +387,41 @@ coverageOptionsParser =
               <> metavar "NAME"
               <> help "Only check this package (repeatable)"
           )
+      )
+
+aihcBaseOptionsParser :: Parser AihcBaseOptions
+aihcBaseOptionsParser =
+  AihcBaseOptions
+    <$> strOption
+      ( long "source"
+          <> metavar "DIR"
+          <> help "Root of the aihc-base source tree (nix run .#bench-aihc-base supplies the pinned checkout)"
+      )
+    <*> option
+      auto
+      ( long "warmup"
+          <> metavar "N"
+          <> value 1
+          <> showDefault
+          <> help "Number of warmup iterations"
+      )
+    <*> option
+      auto
+      ( long "iterations"
+          <> metavar "N"
+          <> value 5
+          <> showDefault
+          <> help "Number of benchmark iterations"
+      )
+    <*> option
+      parseOutputFormat
+      ( long "output"
+          <> short 'o'
+          <> metavar "FORMAT"
+          <> value FormatHuman
+          <> help "Output format: human, json, csv (default: human)"
+      )
+    <*> switch
+      ( long "gc-stats"
+          <> help "Include GC statistics (requires +RTS -T)"
       )

@@ -1,5 +1,22 @@
 {
   "nodes": {
+    "aihc": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1789400431,
+        "narHash": "sha256-LwaJPLaJjw4a2pY6w/ko6Oai5IEuYpatT8eH2oP7RCA=",
+        "owner": "ai-haskell-compiler",
+        "repo": "aihc",
+        "rev": "d2945515818982c5512e8d2e209a8b3b0d7b05bb",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ai-haskell-compiler",
+        "repo": "aihc",
+        "rev": "d2945515818982c5512e8d2e209a8b3b0d7b05bb",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1784555310,
@@ -18,6 +35,7 @@
     },
     "root": {
       "inputs": {
+        "aihc": "aihc",
         "nixpkgs": "nixpkgs"
       }
     }
