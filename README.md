@@ -98,11 +98,13 @@ write a new `BENCHMARKS.md`. The tool downloads the snapshot packages, so the
 first run takes a long time.
 
 For optimisation work, `just bench-aihc-base` (or `nix run .#bench-aihc-base`)
-is the short inner loop. It parses the 263 Haskell files of `core-libs/aihc-base`
-from the `aihc` repository and forces every resulting `Module` with `deepseq`,
-which is what a downstream compiler pass actually does with a parse tree. One
-iteration takes roughly 160 ms, and the corpus is pinned by commit in
-`flake.lock`, so numbers stay comparable across machines and across days.
+is the short inner loop. Each iteration scans `core-libs/aihc-base` from the
+`aihc` repository for its 263 Haskell files, reads them, parses them, and
+forces every resulting `Module` with `deepseq`, which is what a downstream
+compiler pass actually does with a parse tree. The file IO is inside the
+measured time, as it would be for a real build. One iteration takes roughly
+190 ms, and the corpus is pinned by commit in `flake.lock`, so numbers stay
+comparable across machines and across days.
 
 Forcing runs in two phases, mirroring a compiler front end: first the module
 head and import list of *every* module, which is what a driver needs before it

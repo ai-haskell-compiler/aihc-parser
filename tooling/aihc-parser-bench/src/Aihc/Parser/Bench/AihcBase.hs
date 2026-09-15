@@ -15,8 +15,13 @@
 -- therefore live across the whole iteration, so peak heap reflects holding
 -- the batch rather than one module at a time.
 --
--- None of the sources use CPP, so no preprocessor runs and the measured time
--- is lexing plus parsing plus the cost of forcing the resulting tree.
+-- Each timed iteration starts from the corpus root on disk: it scans the
+-- directory tree for @.hs@ files, reads and decodes them, and only then
+-- parses.  A compiler front end pays for that file IO on every build, so the
+-- benchmark charges for it too rather than measuring against a corpus that is
+-- already in memory.  None of the sources use CPP, so no preprocessor runs
+-- and the measured time is file IO plus lexing plus parsing plus the cost of
+-- forcing the resulting tree.
 module Aihc.Parser.Bench.AihcBase
   ( -- * Corpus
     SourceFile (..),
@@ -57,13 +62,13 @@ import Data.Text (Text)
 import Data.Text.Encoding qualified as TE
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Stats qualified as Stats
-import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
-import System.FilePath (makeRelative, takeExtension, (</>))
+import System.Directory (doesDirectoryExist, doesFileExist, listDirectory, makeAbsolute)
+import System.FilePath (takeExtension, (</>))
 import System.IO (hFlush, hPutStr, hPutStrLn, stderr)
 
 -- | One Haskell source file from the corpus, already decoded.
 data SourceFile = SourceFile
-  { -- | Path relative to the corpus root, used as the parser's source name.
+  { -- | Absolute path of the file, used as the parser's source name.
     sourceFileName :: !FilePath,
     sourceFileText :: !Text,
     sourceFileBytes :: !Int
@@ -96,16 +101,20 @@ findHaskellFiles root = sort <$> go root
       pure ([f | f <- files, takeExtension f == ".hs"] ++ nested)
 
 -- | Read every @.hs@ file under the corpus root into memory.
+--
+-- The root is made absolute first, so every 'sourceFileName' is an absolute
+-- path however the root was given on the command line.
 loadCorpus :: FilePath -> IO [SourceFile]
 loadCorpus root = do
-  paths <- findHaskellFiles root
+  absoluteRoot <- makeAbsolute root
+  paths <- findHaskellFiles absoluteRoot
   mapM readSourceFile paths
   where
     readSourceFile path = do
       bytes <- BS.readFile path
       pure
         SourceFile
-          { sourceFileName = makeRelative root path,
+          { sourceFileName = path,
             sourceFileText = TE.decodeUtf8 bytes,
             sourceFileBytes = BS.length bytes
           }
@@ -192,10 +201,11 @@ parseAndForce file =
   where
     parsed = parseSourceFile file
 
--- | Load the corpus, then time repeated parse-and-force passes over it.
+-- | Check that the corpus parses, then time repeated load-parse-and-force
+-- passes over it.
 runAihcBaseBenchmark :: AihcBaseOptions -> IO (BenchmarkResult, [(FilePath, String)])
 runAihcBaseBenchmark opts = do
-  let root = aihcBaseSource opts
+  root <- makeAbsolute (aihcBaseSource opts)
   exists <- doesDirectoryExist root
   unless exists $ fail ("Corpus directory does not exist: " ++ root)
 
@@ -217,12 +227,12 @@ runAihcBaseBenchmark opts = do
   hPutStrLn stderr $ " " ++ show (length failures) ++ " failure(s)"
 
   hPutStrLn stderr $ "Running " ++ show (aihcBaseWarmup opts) ++ " warmup iteration(s)..."
-  warmups <- replicateM (aihcBaseWarmup opts) (reportIteration "Warmup" corpus)
+  warmups <- replicateM (aihcBaseWarmup opts) (reportIteration "Warmup" root)
 
   gcBefore <- captureGCStatsIf (aihcBaseGcStats opts)
 
   hPutStrLn stderr $ "Running " ++ show (aihcBaseIterations opts) ++ " benchmark iteration(s)..."
-  mains <- replicateM (aihcBaseIterations opts) (reportIteration "Iteration" corpus)
+  mains <- replicateM (aihcBaseIterations opts) (reportIteration "Iteration" root)
 
   gcAfter <- captureGCStatsIf (aihcBaseGcStats opts)
 
@@ -236,8 +246,8 @@ runAihcBaseBenchmark opts = do
       failures
     )
   where
-    reportIteration label corpus = do
-      result <- runIteration corpus
+    reportIteration label root = do
+      result <- runIteration root
       hPutStrLn stderr $
         "  "
           ++ label
@@ -248,14 +258,16 @@ runAihcBaseBenchmark opts = do
           ++ "ms"
       pure result
 
--- | One timed pass over the corpus.
+-- | One timed pass over the corpus, starting from the directory on disk.
 --
--- Phase one forces the head and imports of every module before phase two
--- touches any declaration, so the whole batch of parse trees stays reachable
--- until the iteration ends.
-runIteration :: [SourceFile] -> IO IterationResult
-runIteration corpus = do
+-- The clock starts before the directory scan, so finding, reading and
+-- decoding the files is part of the measured time.  Phase one then forces the
+-- head and imports of every module before phase two touches any declaration,
+-- so the whole batch of parse trees stays reachable until the iteration ends.
+runIteration :: FilePath -> IO IterationResult
+runIteration root = do
   start <- getMonotonicTimeNSec
+  corpus <- loadCorpus root
   let parsed = map parseSourceFile corpus
   _ <- evaluate (forceAll forceModuleHeader parsed)
   _ <- evaluate (forceAll forceModuleBody parsed)
