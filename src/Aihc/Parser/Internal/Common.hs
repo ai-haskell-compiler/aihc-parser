@@ -468,10 +468,11 @@ stringTextParser =
 -- token at the start state to the last token consumed before the end state.
 --
 -- A parser that consumed nothing gets the zero-width span at the point where
--- it stands. A stream with no tokens at all has no such point; the lexer never
--- builds one, since it always ends the stream with 'TkEOF', but a stream built
--- from an explicit token list can be empty. The span then covers the whole
--- input, which is empty.
+-- it stands. A stream with no tokens at all has no token to stand at; the
+-- lexer never builds one, since it always ends the stream with 'TkEOF', but a
+-- stream built from an explicit token list can be empty. The parser state
+-- still knows the source name and the initial position, so the span is then
+-- the zero-width span at the start of the input.
 consumedSpan :: MP.State TokStream ParserErrorComponent -> MP.State TokStream ParserErrorComponent -> TokParser SourceSpan
 consumedSpan startState endState =
   case (inputStartSpan (MP.stateInput startState), lexTokenSpan <$> tokStreamPrevToken (MP.stateInput endState)) of
@@ -480,7 +481,7 @@ consumedSpan startState endState =
       | otherwise -> pure (emptySpanAtStart next)
     (Just next, Nothing) -> pure (emptySpanAtStart next)
     (Nothing, Just prev) -> pure (emptySpanAtEnd prev)
-    (Nothing, Nothing) -> wholeInputSpan
+    (Nothing, Nothing) -> spanAtInputStart
   where
     emptySpanAtStart sp =
       sp
@@ -494,7 +495,7 @@ consumedSpan startState endState =
           sourceSpanStartCol = sourceSpanEndCol sp,
           sourceSpanStartOffset = sourceSpanEndOffset sp
         }
-    wholeInputSpan = do
+    spanAtInputStart = do
       pos <- MP.pstateSourcePos . MP.statePosState <$> MP.getParserState
       pure
         SourceSpan
