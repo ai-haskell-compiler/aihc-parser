@@ -1,0 +1,7 @@
+extensions: [QuantifiedConstraints]
+input: |
+  {-# LANGUAGE QuantifiedConstraints #-}
+  class (Eq1 t, forall a. Eq a => Eq (t a)) => Eq1Wrapper t
+ast: |-
+  Module {[QuantifiedConstraints], [DeclClass (ClassDecl {[TApp (TCon "Eq1") (TVar "t"), TForall [TyVarBinder {"a"}] (TContext [TApp (TCon "Eq") (TVar "a")] (TApp (TCon "Eq") (TParen (TApp (TVar "t") (TVar "a")))))], Prefix "Eq1Wrapper" [TyVarBinder {"t"}]})]}
+status: pass

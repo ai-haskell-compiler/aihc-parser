@@ -1,0 +1,7 @@
+extensions: [QuantifiedConstraints]
+input: |
+  {-# LANGUAGE QuantifiedConstraints #-}
+  class (Marker f, p => q) => Implies f p q
+ast: |-
+  Module {[QuantifiedConstraints], [DeclClass (ClassDecl {[TApp (TCon "Marker") (TVar "f"), TContext [TVar "p"] (TVar "q")], Prefix "Implies" [TyVarBinder {"f"}, TyVarBinder {"p"}, TyVarBinder {"q"}]})]}
+status: pass

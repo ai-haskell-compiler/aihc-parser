@@ -1,0 +1,7 @@
+extensions: [QuantifiedConstraints]
+input: |
+  {-# LANGUAGE QuantifiedConstraints #-}
+  instance (Show a, forall b. Show b => Show (f b)) => Show (Wrap f a)
+ast: |-
+  Module {[QuantifiedConstraints], [DeclInstance (InstanceDecl {[TApp (TCon "Show") (TVar "a"), TForall [TyVarBinder {"b"}] (TContext [TApp (TCon "Show") (TVar "b")] (TApp (TCon "Show") (TParen (TApp (TVar "f") (TVar "b")))))], TApp (TCon "Show") (TParen (TApp (TApp (TCon "Wrap") (TVar "f")) (TVar "a")))})]}
+status: pass

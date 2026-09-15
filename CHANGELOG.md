@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Read a quantified constraint that is one item of a comma-separated context.
+  The context-item parser had no rule for `forall a. C a => D (f a)` or for
+  `p => q`, so a context such as
+  `class (Eq1 t, forall a. Eq a => Eq (t a)) => Eq1Wrapper t` did not divide
+  into items. The parentheses then fell back to the general type parser, which
+  read the full list as one tuple type, and `classDeclContext` held a single
+  `TTuple` instead of two constraints. A quantified constraint that is the only
+  item of a context was not affected.
+
 ## [3.0.1.0] - 2026-09-09
 
 ### Performance

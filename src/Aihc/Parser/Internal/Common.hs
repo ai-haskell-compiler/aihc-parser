@@ -720,12 +720,59 @@ contextItemsParserWith typeParser typeAtomParser =
   MP.try parenthesizedContextItemsParser <|> fmap pure (contextItemParserWith typeParser typeAtomParser)
   where
     parenthesizedContextItemsParser = do
-      items <- parens (contextItemParserWith typeParser typeAtomParser `MP.sepEndBy` expectedTok TkSpecialComma)
+      items <- parens (listContextItemParser `MP.sepEndBy` expectedTok TkSpecialComma)
       guardNotFollowedByConstraintInfixOp
       case items of
         [] -> fail "empty constraint list in parens"
         [item] -> pure [typeAnnSpan NoSourceSpan (TParen item)]
         _ -> pure items
+    listContextItemParser =
+      MP.try quantifiedContextItemParser <|> contextItemParserWith typeParser typeAtomParser
+    -- \| Extension form (QuantifiedConstraints):
+    --
+    -- > context item -> ['forall' binders '.'] [context '=>'] constraint
+    --
+    -- 'contextItemParserWith' cannot read these two forms. Without this
+    -- alternative the comma-separated list fails, and the enclosing
+    -- parentheses fall back to 'typeAtomParser', which reads the full list as
+    -- one tuple type. The generic type parser reads both forms.
+    quantifiedContextItemParser = do
+      guard =<< startsQuantifiedConstraint
+      typeParser
+    -- \| Look ahead for a 'forall' or a '=>' that belongs to this list item.
+    -- The scan stops at the comma that ends the item and at the closing
+    -- parenthesis of the list.
+    startsQuantifiedConstraint :: TokParser Bool
+    startsQuantifiedConstraint = MP.lookAhead (go (0 :: Int))
+      where
+        go depth = do
+          tok <- anySingle
+          case lexTokenKind tok of
+            TkEOF -> pure False
+            TkKeywordForall | depth == 0 -> pure True
+            TkReservedDoubleArrow | depth == 0 -> pure True
+            TkSpecialComma | depth == 0 -> pure False
+            TkSpecialLParen -> go (depth + 1)
+            TkSpecialRParen
+              | depth > 0 -> go (depth - 1)
+              | otherwise -> pure False
+            TkSpecialUnboxedLParen -> go (depth + 1)
+            TkSpecialUnboxedRParen
+              | depth > 0 -> go (depth - 1)
+              | otherwise -> pure False
+            TkSpecialLBracket -> go (depth + 1)
+            TkSpecialRBracket
+              | depth > 0 -> go (depth - 1)
+              | otherwise -> pure False
+            TkSpecialLBrace
+              | lexTokenOrigin tok == InsertedLayout -> pure False
+            TkSpecialRBrace
+              | lexTokenOrigin tok == InsertedLayout -> pure False
+            TkSpecialSemicolon -> pure False
+            TkReservedEquals -> pure False
+            TkReservedPipe -> pure False
+            TkKeywordWhere -> pure False
+            _ -> go depth
     guardNotFollowedByConstraintInfixOp = do
       isFollowed <-
         fmap (either (const False) (const True))
