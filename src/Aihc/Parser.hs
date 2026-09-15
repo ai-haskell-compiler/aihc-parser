@@ -160,7 +160,7 @@ parseDecl cfg input =
 --
 -- >>> case parseModule defaultConfig "x = 1" of { (_, m) -> moduleName m }
 -- Nothing
-parseModule :: ParserConfig -> Text -> ([(SourceSpan, Text)], Module)
+parseModule :: ParserConfig -> Text -> ([(Maybe SourceSpan, Text)], Module)
 parseModule cfg input =
   let ts = mkTokStreamModule (parserSourceName cfg) (applyImpliedExtensions (parserExtensions cfg)) input
       parser = do
@@ -182,7 +182,7 @@ parseModule cfg input =
           (parseErrorsToSpannedText errs, modu)
 
 -- | Pretty-print a list of spanned parse errors with source context.
-formatParseErrors :: FilePath -> Maybe Text -> [(SourceSpan, Text)] -> String
+formatParseErrors :: FilePath -> Maybe Text -> [(Maybe SourceSpan, Text)] -> String
 formatParseErrors sourceName mSource errs =
   let opts = defaultLayoutOptions
       blocks =
@@ -191,8 +191,8 @@ formatParseErrors sourceName mSource errs =
               renderString
                 ( layoutPretty opts $
                     case (srcSpan, mSource) of
-                      (ss@SourceSpan {}, Just source) ->
-                        vcat [renderSourceReference sourceName source ss, pretty msg]
+                      (Just ss, Just source) ->
+                        vcat [renderSourceReference source ss, pretty msg]
                       _ ->
                         vcat [pretty sourceName, pretty msg]
                 )
@@ -200,27 +200,20 @@ formatParseErrors sourceName mSource errs =
           errs
    in List.intercalate "\n\n" blocks
 
--- renderSourceReference "<input>" "x = 1" (SourceSpan 1 5 1 6) = """
+-- renderSourceReference "x = 1" (SourceSpan "<input>" 1 5 1 6 4 5) = """
 -- <input>:1:5:
 -- 1 | x = 1
 --   |     ^
 -- """
--- renderSourceReference "<input>" "module where" (SourceSpan 1 8 1 13) = """
--- <input>:1:5:
+-- renderSourceReference "module where" (SourceSpan "<input>" 1 8 1 13 7 12) = """
+-- <input>:1:8:
 -- 1 | module where
 --   |        ^^^^^
 -- """
-renderSourceReference :: String -> Text -> SourceSpan -> Doc ann
-renderSourceReference origin source srcSpan =
-  let (renderedOrigin, lineNo, colNo, endCol, srcLine) = case srcSpan of
-        SourceSpan {sourceSpanSourceName, sourceSpanStartLine, sourceSpanStartCol, sourceSpanEndCol, sourceSpanStartOffset} ->
-          ( sourceSpanSourceName,
-            sourceSpanStartLine,
-            sourceSpanStartCol,
-            sourceSpanEndCol,
-            extractSourceLineByOffset source sourceSpanStartOffset
-          )
-        NoSourceSpan -> (origin, 1, 1, 1, "")
+renderSourceReference :: Text -> SourceSpan -> Doc ann
+renderSourceReference source srcSpan =
+  let SourceSpan {sourceSpanSourceName = renderedOrigin, sourceSpanStartLine = lineNo, sourceSpanStartCol = colNo, sourceSpanEndCol = endCol, sourceSpanStartOffset} = srcSpan
+      srcLine = extractSourceLineByOffset source sourceSpanStartOffset
       lineNoText = show lineNo
       markerPrefix = replicate (length lineNoText) ' ' ++ " | "
       markerStart = max 0 (colNo - 1)

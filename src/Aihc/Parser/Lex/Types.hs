@@ -456,10 +456,7 @@ skipWhitespace st =
    in go 0 (lexerLine st) (lexerCol st) (lexerByteOffset st) (lexerAtLineStart st)
 
 tokenStartCol :: LexToken -> Int
-tokenStartCol tok =
-  case lexTokenSpan tok of
-    SourceSpan {sourceSpanStartCol = col} -> col
-    NoSourceSpan -> 1
+tokenStartCol tok = sourceSpanStartCol (lexTokenSpan tok)
 
 virtualSymbolToken :: Text -> SourceSpan -> LexToken
 virtualSymbolToken sym span' =

@@ -458,18 +458,11 @@ negateToken stBefore numTok =
         other -> other
 
     extendSpanLeft sp =
-      case sp of
-        SourceSpan {sourceSpanSourceName, sourceSpanEndLine = endLine, sourceSpanEndCol = endCol, sourceSpanEndOffset} ->
-          SourceSpan
-            { sourceSpanSourceName = sourceSpanSourceName,
-              sourceSpanStartLine = lexerLine stBefore,
-              sourceSpanStartCol = lexerCol stBefore,
-              sourceSpanEndLine = endLine,
-              sourceSpanEndCol = endCol,
-              sourceSpanStartOffset = lexerByteOffset stBefore,
-              sourceSpanEndOffset = sourceSpanEndOffset
-            }
-        NoSourceSpan -> NoSourceSpan
+      sp
+        { sourceSpanStartLine = lexerLine stBefore,
+          sourceSpanStartCol = lexerCol stBefore,
+          sourceSpanStartOffset = lexerByteOffset stBefore
+        }
 
 -- | Does the token kind represent a primitive (unboxed) numeric literal?
 -- These are MagicHash types (Int#, Word#, Float#, Double#) and ExtendedLiterals

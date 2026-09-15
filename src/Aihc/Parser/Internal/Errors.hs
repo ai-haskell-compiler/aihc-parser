@@ -5,11 +5,10 @@ module Aihc.Parser.Internal.Errors
 where
 
 import Aihc.Parser.Lex (LexToken (..), TokenOrigin (..))
-import Aihc.Parser.Syntax (SourceSpan (..))
+import Aihc.Parser.Syntax (SourceSpan)
 import Aihc.Parser.Types (FoundToken (..), ParseErrorBundle, ParserErrorComponent (..), TokStream)
 import Data.List qualified as List
 import Data.List.NonEmpty qualified as NE
-import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -19,13 +18,13 @@ import Text.Megaparsec qualified as MP
 import Text.Megaparsec.Error (ErrorFancy (..), ErrorItem (..))
 import Text.Megaparsec.Error qualified as MPE
 
-parseErrorBundleToSpannedText :: ParseErrorBundle -> [(SourceSpan, Text)]
+parseErrorBundleToSpannedText :: ParseErrorBundle -> [(Maybe SourceSpan, Text)]
 parseErrorBundleToSpannedText bundle =
   parseErrorsToSpannedText (NE.toList (MPE.bundleErrors bundle))
 
-parseErrorsToSpannedText :: [MPE.ParseError TokStream ParserErrorComponent] -> [(SourceSpan, Text)]
+parseErrorsToSpannedText :: [MPE.ParseError TokStream ParserErrorComponent] -> [(Maybe SourceSpan, Text)]
 parseErrorsToSpannedText errs =
-  [ (fromMaybe NoSourceSpan mSpan, RText.renderStrict (layoutPretty defaultLayoutOptions doc))
+  [ (mSpan, RText.renderStrict (layoutPretty defaultLayoutOptions doc))
   | err <- List.sortOn MP.errorOffset errs,
     (mSpan, doc) <- renderParseErrors err
   ]

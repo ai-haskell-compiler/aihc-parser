@@ -370,7 +370,7 @@ data ParserConfig = ParserConfig
 
 data ParseResult a
   = ParseOk a
-  | ParseErr [(SourceSpan, Text)]
+  | ParseErr [(Maybe SourceSpan, Text)]
 
 instance (NFData a) => NFData (ParseResult a) where
   rnf parseResult =

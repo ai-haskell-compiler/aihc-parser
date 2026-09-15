@@ -115,7 +115,7 @@ data ParsedModule = ParsedModule
   { parsedFileName :: !FilePath,
     -- | Kept so that a failure can be reported with source context.
     parsedSource :: Text,
-    parsedErrors :: [(SourceSpan, Text)],
+    parsedErrors :: [(Maybe SourceSpan, Text)],
     parsedTree :: Module
   }
 

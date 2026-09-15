@@ -120,7 +120,6 @@ module Aihc.Parser.Syntax
     gadtBodyResultType,
     languageEditionExtensions,
     editionFromExtensionSettings,
-    noSourceSpan,
     mergeSourceSpans,
     mkName,
     mkUnqualifiedName,
@@ -671,25 +670,24 @@ effectiveExtensions edition = List.foldl' applyOne (languageEditionExtensions ed
     applyOne extensions setting@(EnableExtension _) = applyImpliedExtensions (applyExtensionSetting setting extensions)
     applyOne extensions setting@(DisableExtension _) = applyExtensionSetting setting extensions
 
--- | Source location metadata for parsed syntax.
--- Example: the span covering @map@ in @map f xs@.
-data SourceSpan
-  = -- | No location information is available.
-    NoSourceSpan
-  | -- | A concrete span such as the token range for @map@ in @map f xs@.
-    SourceSpan
-      { sourceSpanSourceName :: !FilePath,
-        sourceSpanStartLine :: !Int,
-        sourceSpanStartCol :: !Int,
-        sourceSpanEndLine :: !Int,
-        sourceSpanEndCol :: !Int,
-        sourceSpanStartOffset :: !Int,
-        sourceSpanEndOffset :: !Int
-      }
+-- | Source location metadata for parsed syntax, such as the token range for
+-- @map@ in @map f xs@.
+--
+-- A span is always concrete. Syntax without a location carries no
+-- 'SourceSpan' annotation at all, so consumers read a span with
+-- 'fromAnnotation' and treat its absence as the missing case.
+data SourceSpan = SourceSpan
+  { sourceSpanSourceName :: !FilePath,
+    sourceSpanStartLine :: !Int,
+    sourceSpanStartCol :: !Int,
+    sourceSpanEndLine :: !Int,
+    sourceSpanEndCol :: !Int,
+    sourceSpanStartOffset :: !Int,
+    sourceSpanEndOffset :: !Int
+  }
   deriving (Data, Eq, Ord, Generic, NFData)
 
 instance Show SourceSpan where
-  show NoSourceSpan = "NoSourceSpan"
   show SourceSpan {sourceSpanStartLine, sourceSpanStartCol, sourceSpanEndLine, sourceSpanEndCol} =
     "SourceSpan "
       ++ show sourceSpanStartLine
@@ -700,18 +698,15 @@ instance Show SourceSpan where
       ++ " "
       ++ show sourceSpanEndCol
 
-noSourceSpan :: SourceSpan
-noSourceSpan = NoSourceSpan
-
+-- | The span from the start of the first span to the end of the second.
+-- The source name comes from the first span.
 mergeSourceSpans :: SourceSpan -> SourceSpan -> SourceSpan
 mergeSourceSpans left right =
-  case (left, right) of
-    ( SourceSpan name l1 c1 _ _ startOffset _,
-      SourceSpan _ _ _ l2 c2 _ endOffset
-      ) ->
-        SourceSpan name l1 c1 l2 c2 startOffset endOffset
-    (NoSourceSpan, span') -> span'
-    (span', NoSourceSpan) -> span'
+  left
+    { sourceSpanEndLine = sourceSpanEndLine right,
+      sourceSpanEndCol = sourceSpanEndCol right,
+      sourceSpanEndOffset = sourceSpanEndOffset right
+    }
 
 -- | A qualified or unqualified name with type information.
 --
@@ -1987,7 +1982,7 @@ fromAnnotation (DynamicAnnotation value) = fromDynamic value
 
 instance Data Annotation where
   gfoldl _ z = z
-  gunfold _ z _ = z (SourceSpanAnnotation NoSourceSpan)
+  gunfold _ z _ = z (DynamicAnnotation (toDyn ()))
   toConstr _ = annotationConstr
   dataTypeOf _ = annotationDataType
 

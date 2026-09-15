@@ -734,17 +734,14 @@ test_indentedHashLineIsOperator =
     other -> assertFailure ("expected indented '# line' to lex as operator + identifier, got: " <> show other)
 
 assertSourceSpan :: FilePath -> Int -> Int -> Int -> Int -> Int -> Int -> SourceSpan -> Assertion
-assertSourceSpan expectedName expectedStartLine expectedStartCol expectedEndLine expectedEndCol expectedStartOffset expectedEndOffset span' =
-  case span' of
-    SourceSpan {sourceSpanSourceName, sourceSpanStartLine, sourceSpanStartCol, sourceSpanEndLine, sourceSpanEndCol, sourceSpanStartOffset, sourceSpanEndOffset} -> do
-      assertEqual "source name" expectedName sourceSpanSourceName
-      assertEqual "start line" expectedStartLine sourceSpanStartLine
-      assertEqual "start col" expectedStartCol sourceSpanStartCol
-      assertEqual "end line" expectedEndLine sourceSpanEndLine
-      assertEqual "end col" expectedEndCol sourceSpanEndCol
-      assertEqual "start offset" expectedStartOffset sourceSpanStartOffset
-      assertEqual "end offset" expectedEndOffset sourceSpanEndOffset
-    NoSourceSpan -> assertFailure "expected SourceSpan, got NoSourceSpan"
+assertSourceSpan expectedName expectedStartLine expectedStartCol expectedEndLine expectedEndCol expectedStartOffset expectedEndOffset SourceSpan {sourceSpanSourceName, sourceSpanStartLine, sourceSpanStartCol, sourceSpanEndLine, sourceSpanEndCol, sourceSpanStartOffset, sourceSpanEndOffset} = do
+  assertEqual "source name" expectedName sourceSpanSourceName
+  assertEqual "start line" expectedStartLine sourceSpanStartLine
+  assertEqual "start col" expectedStartCol sourceSpanStartCol
+  assertEqual "end line" expectedEndLine sourceSpanEndLine
+  assertEqual "end col" expectedEndCol sourceSpanEndCol
+  assertEqual "start offset" expectedStartOffset sourceSpanStartOffset
+  assertEqual "end offset" expectedEndOffset sourceSpanEndOffset
 
 assertUnqualifiedNameSpan :: String -> FilePath -> Int -> Int -> Int -> Int -> Int -> Int -> UnqualifiedName -> Assertion
 assertUnqualifiedNameSpan label expectedName expectedStartLine expectedStartCol expectedEndLine expectedEndCol expectedStartOffset expectedEndOffset name =
@@ -794,11 +791,8 @@ test_syntaxUtilityFunctions = do
   let spanA = SourceSpan "A.hs" 1 2 1 4 0 2
       spanB = SourceSpan "A.hs" 2 1 2 5 3 7
       merged = SourceSpan "A.hs" 1 2 2 5 0 7
-  assertEqual "show no source span" "NoSourceSpan" (show noSourceSpan)
   assertEqual "show source span" "SourceSpan 1 2 2 5" (show merged)
   assertEqual "merge source spans" merged (mergeSourceSpans spanA spanB)
-  assertEqual "merge left missing source span" spanB (mergeSourceSpans NoSourceSpan spanB)
-  assertEqual "merge right missing source span" spanA (mergeSourceSpans spanA NoSourceSpan)
   assertBool "source span ordering" (spanA < spanB)
   assertBool "source span nfdata" (rnf merged `seq` True)
 

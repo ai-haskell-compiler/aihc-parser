@@ -32,8 +32,9 @@ module Aihc.Parser.Internal.Common
     operatorTextParser,
     constructorInfixOperatorNameParser,
     stringTextParser,
+    consumedSpan,
     inputStartSpan,
-    withSpan,
+    withSpanAnns,
     withSpanAnn,
     optionalSuffix,
     parens,
@@ -463,35 +464,48 @@ stringTextParser =
       TkString txt -> Just txt
       _ -> Nothing
 
+-- | The span of the tokens between two stream positions: from the first token
+-- at the start position to the last token consumed before the end position.
+-- 'Nothing' when neither end has a token, which only happens on an empty
+-- token stream.
+consumedSpan :: TokStream -> TokStream -> Maybe SourceSpan
+consumedSpan startInput endInput =
+  case (inputStartSpan startInput, lexTokenSpan <$> tokStreamPrevToken endInput) of
+    (Just startSpan, Just endSpan) -> Just (mergeSourceSpans startSpan endSpan)
+    (Just startSpan, Nothing) -> Just startSpan
+    (Nothing, endSpan) -> endSpan
+{-# INLINE consumedSpan #-}
+
+-- | Run a parser and annotate its result with the span of the consumed
+-- tokens. The result stays unannotated when no span is available.
 withSpanAnn :: (SourceSpan -> a -> a) -> TokParser a -> TokParser a
 withSpanAnn f parser = do
   startInput <- MP.getInput
   out <- parser
   endInput <- MP.getInput
-  let startSpan = inputStartSpan startInput
-      endSpan = maybe noSourceSpan lexTokenSpan (tokStreamPrevToken endInput)
-      parserSpan = mergeSourceSpans startSpan endSpan
-  pure $ f parserSpan out
+  let annotate sp = f sp out
+  pure (maybe out annotate (consumedSpan startInput endInput))
 {-# INLINE withSpanAnn #-}
 
--- FIXME: Remove.
-withSpan :: TokParser (SourceSpan -> a) -> TokParser a
-withSpan parser = do
+-- | Run a parser whose result takes its annotations as a list: the
+-- 'SourceSpan' annotation for the consumed tokens, or no annotation when no
+-- span is available.
+withSpanAnns :: TokParser ([Annotation] -> a) -> TokParser a
+withSpanAnns parser = do
   startInput <- MP.getInput
   out <- parser
   endInput <- MP.getInput
-  let startSpan = inputStartSpan startInput
-      endSpan = maybe noSourceSpan lexTokenSpan (tokStreamPrevToken endInput)
-      parserSpan = mergeSourceSpans startSpan endSpan
-  pure (out parserSpan)
-{-# INLINE withSpan #-}
+  let anns = maybe [] (pure . mkAnnotation) (consumedSpan startInput endInput)
+  pure (out anns)
+{-# INLINE withSpanAnns #-}
 
-inputStartSpan :: TokStream -> SourceSpan
+-- | The span of the next token, if there is one.
+inputStartSpan :: TokStream -> Maybe SourceSpan
 inputStartSpan ts
-  | tokStreamEOFEmitted ts = noSourceSpan
-  | tok : _ <- tokStreamBuffer ts = lexTokenSpan tok
-  | rawTok : _ <- tokStreamRawTokens ts = lexTokenSpan rawTok
-  | otherwise = noSourceSpan
+  | tokStreamEOFEmitted ts = Nothing
+  | tok : _ <- tokStreamBuffer ts = Just (lexTokenSpan tok)
+  | rawTok : _ <- tokStreamRawTokens ts = Just (lexTokenSpan rawTok)
+  | otherwise = Nothing
 {-# INLINE inputStartSpan #-}
 
 optionalSuffix :: TokParser b -> (a -> b -> a) -> TokParser a -> TokParser a
@@ -719,13 +733,19 @@ contextItemsParserWith :: TokParser Type -> TokParser Type -> TokParser [Type]
 contextItemsParserWith typeParser typeAtomParser =
   MP.try parenthesizedContextItemsParser <|> fmap pure (contextItemParserWith typeParser typeAtomParser)
   where
-    parenthesizedContextItemsParser = do
+    parenthesizedContextItemsParser = withSpanAnn annotateSingleItem $ do
       items <- parens (listContextItemParser `MP.sepEndBy` expectedTok TkSpecialComma)
       guardNotFollowedByConstraintInfixOp
       case items of
         [] -> fail "empty constraint list in parens"
-        [item] -> pure [typeAnnSpan NoSourceSpan (TParen item)]
+        [item] -> pure [TParen item]
         _ -> pure items
+    -- A single item keeps its parentheses as a node that spans the whole
+    -- parenthesized list.
+    annotateSingleItem sp items =
+      case items of
+        [item] -> [typeAnnSpan sp item]
+        _ -> items
     listContextItemParser =
       MP.try quantifiedContextItemParser <|> contextItemParserWith typeParser typeAtomParser
     -- \| Extension form (QuantifiedConstraints):

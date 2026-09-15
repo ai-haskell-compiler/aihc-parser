@@ -8,7 +8,7 @@ module Aihc.Parser.Lex.Layout
 where
 
 import Aihc.Parser.Lex.Types
-import Aihc.Parser.Syntax (Extension, SourceSpan (..))
+import Aihc.Parser.Syntax (Extension, SourceSpan)
 import Data.Maybe (fromMaybe)
 
 ordinaryLayout :: ImplicitLayoutSpec
@@ -57,10 +57,17 @@ applyLayoutTokens enableModuleLayout exts =
     go st toks =
       case toks of
         [] ->
-          let eofAnchor = NoSourceSpan
-              (moduleInserted, stAfterModule) = finalizeModuleLayoutAtEOF st eofAnchor
-              (pendingInserted, stAfterPending) = flushPendingCaseLayoutAtEOF stAfterModule eofAnchor
-           in moduleInserted <> pendingInserted <> closeAllImplicit (layoutContexts stAfterPending) eofAnchor
+          -- The lexer ends every token list with 'TkEOF', and that transition
+          -- closes every open context, so normally nothing is left here. A
+          -- list that ends without 'TkEOF' anchors any remaining virtual
+          -- tokens to the last source token; without one there is nothing to
+          -- anchor them to.
+          case layoutPrevTokenEndSpan st of
+            Nothing -> []
+            Just eofAnchor ->
+              let (moduleInserted, stAfterModule) = finalizeModuleLayoutAtEOF st eofAnchor
+                  (pendingInserted, stAfterPending) = flushPendingCaseLayoutAtEOF stAfterModule eofAnchor
+               in moduleInserted <> pendingInserted <> closeAllImplicit (layoutContexts stAfterPending) eofAnchor
         tok : rest ->
           let (emitted, stNext) = layoutTransition st tok
            in emitted <> go stNext rest
@@ -455,23 +462,13 @@ layoutTransition st tok =
 
 closeImplicitLayoutContext :: LayoutState -> Maybe LayoutState
 closeImplicitLayoutContext st =
-  case layoutContexts st of
-    LayoutImplicit _ : rest -> Just (closeWith rest)
+  case (layoutContexts st, layoutPrevTokenEndSpan st) of
+    -- Only a source token opens an implicit context, so an open context always
+    -- has a preceding source token to anchor the virtual brace to.
+    (LayoutImplicit _ : rest, Just anchor) ->
+      Just
+        st
+          { layoutContexts = rest,
+            layoutBuffer = virtualSymbolToken "}" anchor : layoutBuffer st
+          }
     _ -> Nothing
-  where
-    anchor = fromMaybe noSpan (layoutPrevTokenEndSpan st)
-    noSpan =
-      SourceSpan
-        { sourceSpanSourceName = "",
-          sourceSpanStartLine = 0,
-          sourceSpanStartCol = 0,
-          sourceSpanEndLine = 0,
-          sourceSpanEndCol = 0,
-          sourceSpanStartOffset = 0,
-          sourceSpanEndOffset = 0
-        }
-    closeWith rest =
-      st
-        { layoutContexts = rest,
-          layoutBuffer = virtualSymbolToken "}" anchor : layoutBuffer st
-        }

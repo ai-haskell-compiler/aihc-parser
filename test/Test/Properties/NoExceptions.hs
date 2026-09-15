@@ -326,36 +326,30 @@ genQuoterText =
     ]
 
 genSourceSpan :: Gen SourceSpan
-genSourceSpan =
-  oneof
-    [ pure NoSourceSpan,
-      do
-        sourceName <- elements ["<input>", "source", "generated.h"]
-        startLine <- chooseInt (1, 200)
-        startCol <- chooseInt (1, 200)
-        endLine <- chooseInt (startLine, startLine + 5)
-        endCol <-
-          if endLine == startLine
-            then chooseInt (startCol, startCol + 10)
-            else chooseInt (1, 200)
-        startOffset <- chooseInt (0, 4000)
-        endOffset <- chooseInt (startOffset, startOffset + 200)
-        pure (SourceSpan sourceName startLine startCol endLine endCol startOffset endOffset)
-    ]
+genSourceSpan = do
+  sourceName <- elements ["<input>", "source", "generated.h"]
+  startLine <- chooseInt (1, 200)
+  startCol <- chooseInt (1, 200)
+  endLine <- chooseInt (startLine, startLine + 5)
+  endCol <-
+    if endLine == startLine
+      then chooseInt (startCol, startCol + 10)
+      else chooseInt (1, 200)
+  startOffset <- chooseInt (0, 4000)
+  endOffset <- chooseInt (startOffset, startOffset + 200)
+  pure (SourceSpan sourceName startLine startCol endLine endCol startOffset endOffset)
 
 shrinkSourceSpan :: SourceSpan -> [SourceSpan]
 shrinkSourceSpan span' =
   case span' of
-    NoSourceSpan -> []
     SourceSpan sourceName sl sc el ec startOffset endOffset ->
-      [NoSourceSpan]
-        <> [ SourceSpan sourceName sl' sc' el' ec' startOffset' endOffset'
-           | (sl', sc', el', ec', startOffset', endOffset') <- shrink (sl, sc, el, ec, startOffset, endOffset),
-             sl' >= 1,
-             sc' >= 1,
-             el' >= sl',
-             ec' >= 1,
-             el' > sl' || ec' >= sc',
-             startOffset' >= 0,
-             endOffset' >= startOffset'
-           ]
+      [ SourceSpan sourceName sl' sc' el' ec' startOffset' endOffset'
+      | (sl', sc', el', ec', startOffset', endOffset') <- shrink (sl, sc, el, ec, startOffset, endOffset),
+        sl' >= 1,
+        sc' >= 1,
+        el' >= sl',
+        ec' >= 1,
+        el' > sl' || ec' >= sc',
+        startOffset' >= 0,
+        endOffset' >= startOffset'
+      ]
