@@ -297,7 +297,11 @@ data LayoutState = LayoutState
     layoutPendingLayout :: !(Maybe PendingLayout),
     layoutPrevTokenKind :: !(Maybe LexTokenKind),
     layoutModuleMode :: !ModuleLayoutMode,
-    layoutPrevTokenEndSpan :: !(Maybe SourceSpan),
+    -- | End span of the last token that came from the source, or
+    -- 'NoSourceSpan' before the first one.  A bare 'SourceSpan' rather than a
+    -- 'Maybe' one: the layout state is rebuilt for every token, so the
+    -- @Just@ box was allocated once per token for nothing.
+    layoutPrevTokenEndSpan :: !SourceSpan,
     layoutBuffer :: [LexToken],
     layoutNondecreasingIndent :: !Bool,
     layoutLambdaCase :: !Bool
@@ -345,7 +349,7 @@ mkInitialLayoutState enableModuleLayout exts =
         if enableModuleLayout
           then ModuleLayoutSeekStart
           else ModuleLayoutOff,
-      layoutPrevTokenEndSpan = Nothing,
+      layoutPrevTokenEndSpan = NoSourceSpan,
       layoutBuffer = [],
       layoutNondecreasingIndent = Syntax.NondecreasingIndentation `elem` exts,
       layoutLambdaCase = Syntax.LambdaCase `elem` exts

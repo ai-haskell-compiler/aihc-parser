@@ -24,6 +24,7 @@ import Aihc.Parser.Syntax
 import Aihc.Parser.Types (ParserErrorComponent (..), TokStream (..), mkFoundToken)
 import Control.Monad (guard)
 import Data.Functor (($>))
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Text.Megaparsec (anySingle, lookAhead, (<|>))
 import Text.Megaparsec qualified as MP
@@ -278,11 +279,24 @@ lexpParserWith atomContext = do
     Just sccPragma -> EPragma sccPragma <$> lexpParserWith atomContext
     Nothing -> lexpBaseParserWith atomContext (appExprParserWith (atomOrRecordExprParserWith atomContext))
 
+-- | Every block form starts with a distinct keyword and prefix negation with a
+-- minus token, so the next token decides which alternative can possibly match.
+-- Dispatching on it rather than running the alternatives in turn matters: this
+-- parser runs at every expression position, and the chain used to attempt —
+-- and allocate continuations for — nine block parsers plus a backtracking
+-- negation before reaching the application parser that almost always wins.
 lexpBaseParserWith :: AtomContext -> TokParser Expr -> TokParser Expr
-lexpBaseParserWith atomContext appParser =
-  lexpBlockParserWith atomContext
-    <|> MP.try negateExprParser
-    <|> appParser
+lexpBaseParserWith atomContext appParser = do
+  tok <- lookAhead anySingle
+  case lexTokenKind tok of
+    kind
+      | Just blockParser <- lexpBlockParserForToken atomContext kind -> blockParser
+    TkVarSym "-" -> negateOrApp
+    TkMinusOperator -> negateOrApp
+    TkPrefixMinus -> negateOrApp
+    _ -> appParser
+  where
+    negateOrApp = MP.try negateExprParser <|> appParser
 
 -- | The Haskell report's @lexp@ production: lambda, let, if, case, do, and
 -- function application.  GHC extensions add more forms at the same grammar
@@ -305,20 +319,25 @@ lexpBlockParser :: TokParser Expr
 lexpBlockParser = lexpBlockParserWith NormalExprAtom
 
 lexpBlockParserWith :: AtomContext -> TokParser Expr
-lexpBlockParserWith atomContext =
-  doExprParser
-    <|> mdoExprParser
-    <|> qualifiedDoExprParser
-    <|> qualifiedMdoExprParser
-    <|> ifExprParser
-    <|> caseExprParser
-    <|> letExprParser
-    <|> procBlockParser
-    <|> lambdaExprParser
-  where
-    procBlockParser
-      | atomContext == NormalExprAtom = procExprParser
-      | otherwise = MP.empty
+lexpBlockParserWith atomContext = do
+  tok <- lookAhead anySingle
+  fromMaybe MP.empty (lexpBlockParserForToken atomContext (lexTokenKind tok))
+
+-- | The block parser a token can start, if any.  Each block form begins with
+-- its own keyword, so at most one alternative is ever viable.
+lexpBlockParserForToken :: AtomContext -> LexTokenKind -> Maybe (TokParser Expr)
+lexpBlockParserForToken atomContext kind =
+  case kind of
+    TkKeywordDo -> Just doExprParser
+    TkKeywordMdo -> Just mdoExprParser
+    TkQualifiedDo {} -> Just qualifiedDoExprParser
+    TkQualifiedMdo {} -> Just qualifiedMdoExprParser
+    TkKeywordIf -> Just ifExprParser
+    TkKeywordCase -> Just caseExprParser
+    TkKeywordLet -> Just letExprParser
+    TkKeywordProc | atomContext == NormalExprAtom -> Just procExprParser
+    TkReservedBackslash -> Just lambdaExprParser
+    _ -> Nothing
 
 getSCCPragma :: Pragma -> Maybe Pragma
 getSCCPragma p = case pragmaType p of
@@ -389,7 +408,7 @@ appExprParserWith atomParser = do
     _ -> do
       endInput <- MP.getInput
       let startSpan = inputStartSpan startInput
-          endSpan = maybe noSourceSpan lexTokenSpan (tokStreamPrevToken endInput)
+          endSpan = tokStreamPrevSpan endInput
           appSpan = mergeSourceSpans startSpan endSpan
       pure (EAnn (mkAnnotation appSpan) (foldl applyArg first rest))
   where

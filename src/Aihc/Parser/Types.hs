@@ -33,7 +33,7 @@ import Aihc.Parser.Lex
     readModuleHeaderExtensions,
     scanAllTokens,
   )
-import Aihc.Parser.Syntax (Extension, ExtensionSet, SourceSpan, applyExtensionSetting, applyImpliedExtensions, mkExtensionSet)
+import Aihc.Parser.Syntax (Extension, ExtensionSet, SourceSpan (NoSourceSpan), applyExtensionSetting, applyImpliedExtensions, mkExtensionSet)
 import Control.DeepSeq (NFData (..))
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -93,7 +93,11 @@ data TokStream = TokStream
     -- Parsers may inspect these explicitly, but they never participate in the
     -- ordinary token stream.
     tokStreamPendingPragmas :: [Pragma],
-    tokStreamPrevToken :: Maybe LexToken,
+    -- | End span of the token this stream was reached by, or 'NoSourceSpan'
+    -- at the start.  Only the span was ever read, and a stream is built for
+    -- every token, so keeping the token itself in a @Just@ box cost an
+    -- allocation per token for nothing.
+    tokStreamPrevSpan :: !SourceSpan,
     tokStreamExtensionSet :: ExtensionSet,
     -- | Whether this stream has already emitted TkEOF.
     -- After EOF is emitted, 'take1_' returns Nothing.
@@ -113,7 +117,7 @@ data TokStream = TokStream
 --   a == b =
 --     tokStreamLayoutState a == tokStreamLayoutState b
 --       && tokStreamPendingPragmas a == tokStreamPendingPragmas b
---       && tokStreamPrevToken a == tokStreamPrevToken b
+--       && tokStreamPrevSpan a == tokStreamPrevSpan b
 --       && tokStreamExtensions a == tokStreamExtensions b
 --       && tokStreamEOFEmitted a == tokStreamEOFEmitted b
 
@@ -129,8 +133,8 @@ instance Show TokStream where
       <> show (tokStreamEOFEmitted ts)
       <> ", pendingPragmas = "
       <> show (length (tokStreamPendingPragmas ts))
-      <> ", prevToken = "
-      <> show (tokStreamPrevToken ts)
+      <> ", prevSpan = "
+      <> show (tokStreamPrevSpan ts)
       <> ", extensionSet = "
       <> show (tokStreamExtensionSet ts)
       <> " }"
@@ -139,7 +143,7 @@ instance Show TokStream where
 instance NFData TokStream where
   rnf ts =
     rnf (tokStreamPendingPragmas ts) `seq`
-      rnf (tokStreamPrevToken ts) `seq`
+      rnf (tokStreamPrevSpan ts) `seq`
         rnf (tokStreamExtensionSet ts) `seq`
           rnf (tokStreamEOFEmitted ts)
 
@@ -152,7 +156,7 @@ mkTokStream sourceName exts input =
         (mkInitialLayoutState False exts)
         []
         []
-        Nothing
+        NoSourceSpan
         (mkExtensionSet exts)
         False
 
@@ -166,7 +170,7 @@ mkTokStreamModule sourceName baseExts input =
         (mkInitialLayoutState True effectiveExts)
         []
         []
-        Nothing
+        NoSourceSpan
         (mkExtensionSet effectiveExts)
         False
   where
@@ -183,7 +187,7 @@ mkTokStreamFromTokens toks =
         (mkInitialLayoutState False [])
         toks
         []
-        Nothing
+        NoSourceSpan
         (mkExtensionSet [])
         False
 
@@ -196,7 +200,7 @@ setTokStreamLayout layoutState buffer ts =
     layoutState
     buffer
     (tokStreamPendingPragmas ts)
-    (tokStreamPrevToken ts)
+    (tokStreamPrevSpan ts)
     (tokStreamExtensionSet ts)
     (tokStreamEOFEmitted ts)
 
@@ -208,20 +212,20 @@ setTokStreamPendingPragmas pendingPragmas ts =
     (tokStreamLayoutState ts)
     (tokStreamBuffer ts)
     pendingPragmas
-    (tokStreamPrevToken ts)
+    (tokStreamPrevSpan ts)
     (tokStreamExtensionSet ts)
     (tokStreamEOFEmitted ts)
 
 -- | Build a stream whose memoized successor is computed from its fields.
-buildTokStream :: [LexToken] -> LayoutState -> [LexToken] -> [Pragma] -> Maybe LexToken -> ExtensionSet -> Bool -> TokStream
-buildTokStream rawTokens layoutState buffer pendingPragmas prevToken extensionSet eofEmitted =
+buildTokStream :: [LexToken] -> LayoutState -> [LexToken] -> [Pragma] -> SourceSpan -> ExtensionSet -> Bool -> TokStream
+buildTokStream rawTokens layoutState buffer pendingPragmas prevSpan extensionSet eofEmitted =
   let ts =
         TokStream
           { tokStreamRawTokens = rawTokens,
             tokStreamLayoutState = layoutState,
             tokStreamBuffer = buffer,
             tokStreamPendingPragmas = pendingPragmas,
-            tokStreamPrevToken = prevToken,
+            tokStreamPrevSpan = prevSpan,
             tokStreamExtensionSet = extensionSet,
             tokStreamEOFEmitted = eofEmitted,
             tokStreamNext = stepOne ts
@@ -231,13 +235,13 @@ buildTokStream rawTokens layoutState buffer pendingPragmas prevToken extensionSe
 -- | Advance through layout and hidden tokens until the stream is ready for
 -- 'stepOne'. Keeping the stream fields separate lets a token step normalize
 -- its successor without first allocating an intermediate 'TokStream'.
-normalizeTokStreamParts :: [LexToken] -> LayoutState -> [LexToken] -> [Pragma] -> Maybe LexToken -> ExtensionSet -> Bool -> TokStream
-normalizeTokStreamParts rawTokens layoutState buffer pendingPragmas prevToken extensionSet eofEmitted
+normalizeTokStreamParts :: [LexToken] -> LayoutState -> [LexToken] -> [Pragma] -> SourceSpan -> ExtensionSet -> Bool -> TokStream
+normalizeTokStreamParts rawTokens layoutState buffer pendingPragmas prevSpan extensionSet eofEmitted
   | eofEmitted = finish rawTokens layoutState buffer pendingPragmas
   | otherwise = go rawTokens layoutState buffer pendingPragmas
   where
     finish rawTokens' layoutState' buffer' pendingPragmas' =
-      buildTokStream rawTokens' layoutState' buffer' pendingPragmas' prevToken extensionSet eofEmitted
+      buildTokStream rawTokens' layoutState' buffer' pendingPragmas' prevSpan extensionSet eofEmitted
 
     go rawTokens' layoutState' buffer' pendingPragmas' =
       case buffer' of
@@ -294,7 +298,7 @@ stepOne ts
                   (tokStreamLayoutState ts)
                   rest
                   pendingPragmas
-                  (Just tok)
+                  (lexTokenSpan tok)
                   (tokStreamExtensionSet ts)
                   isEOF
            in Just (tok, next)
@@ -324,7 +328,7 @@ runTokStreamParser parser sourceName ts =
               },
           MP.stateParseErrors = []
         }
-    detachedStream = buildTokStream [] (tokStreamLayoutState ts) [] [] Nothing (tokStreamExtensionSet ts) True
+    detachedStream = buildTokStream [] (tokStreamLayoutState ts) [] [] NoSourceSpan (tokStreamExtensionSet ts) True
 
 instance Stream TokStream where
   type Token TokStream = LexToken

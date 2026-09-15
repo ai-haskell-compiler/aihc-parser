@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Aihc.Parser.Lex.Layout
   ( applyLayoutTokens,
@@ -8,7 +9,7 @@ module Aihc.Parser.Lex.Layout
 where
 
 import Aihc.Parser.Lex.Types
-import Aihc.Parser.Syntax (Extension, SourceSpan (..))
+import Aihc.Parser.Syntax (Extension, SourceSpan (NoSourceSpan), pattern SourceSpan)
 import Data.Maybe (fromMaybe)
 
 ordinaryLayout :: ImplicitLayoutSpec
@@ -227,7 +228,7 @@ bolLayout st tok
   | otherwise =
       let col = tokenStartCol tok
           (inserted, contexts') = closeImplicitLayouts (lexTokenSpan tok) (\indent _ -> col < indent) (layoutContexts st)
-          semiAnchor = fromMaybe (lexTokenSpan tok) (layoutPrevTokenEndSpan st)
+          semiAnchor = orTokenSpan tok (layoutPrevTokenEndSpan st)
           eqSemi =
             case currentLayoutIndentMaybe contexts' of
               Just indent
@@ -422,13 +423,21 @@ closesImplicitBeforeLayoutKeyword kind =
 isBOL :: LayoutState -> LexToken -> Bool
 isBOL _ = lexTokenAtLineStart
 
+-- | A previous-token end span, falling back to the current token's own span
+-- when there is no previous source token yet.
+orTokenSpan :: LexToken -> SourceSpan -> SourceSpan
+orTokenSpan tok span' =
+  case span' of
+    NoSourceSpan -> lexTokenSpan tok
+    _ -> span'
+
 layoutTransition :: LayoutState -> LexToken -> ([LexToken], LayoutState)
 layoutTransition st tok =
   case lexTokenKind tok of
     TkLineComment -> ([tok], st)
     TkBlockComment -> ([tok], st)
     TkEOF ->
-      let eofAnchor = fromMaybe (lexTokenSpan tok) (layoutPrevTokenEndSpan st)
+      let eofAnchor = orTokenSpan tok (layoutPrevTokenEndSpan st)
           (moduleInserted, stAfterModule) = finalizeModuleLayoutAtEOF st eofAnchor
           (pendingInserted, stAfterPending) = flushPendingCaseLayoutAtEOF stAfterModule eofAnchor
        in ( moduleInserted <> pendingInserted <> closeAllImplicit (layoutContexts stAfterPending) eofAnchor <> [tok],
@@ -442,7 +451,7 @@ layoutTransition st tok =
           stAfterToken = noteModuleLayoutAfterToken (stepTokenContext stAfterBOL tok) tok
           newEndSpan =
             if lexTokenOrigin tok == FromSource
-              then Just (lexTokenSpan tok)
+              then lexTokenSpan tok
               else layoutPrevTokenEndSpan stAfterToken
           stNext =
             stAfterToken
@@ -459,17 +468,10 @@ closeImplicitLayoutContext st =
     LayoutImplicit _ : rest -> Just (closeWith rest)
     _ -> Nothing
   where
-    anchor = fromMaybe noSpan (layoutPrevTokenEndSpan st)
-    noSpan =
-      SourceSpan
-        { sourceSpanSourceName = "",
-          sourceSpanStartLine = 0,
-          sourceSpanStartCol = 0,
-          sourceSpanEndLine = 0,
-          sourceSpanEndCol = 0,
-          sourceSpanStartOffset = 0,
-          sourceSpanEndOffset = 0
-        }
+    anchor =
+      case layoutPrevTokenEndSpan st of
+        NoSourceSpan -> SourceSpan "" 0 0 0 0 0 0
+        span' -> span'
     closeWith rest =
       st
         { layoutContexts = rest,

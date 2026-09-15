@@ -469,7 +469,7 @@ withSpanAnn f parser = do
   out <- parser
   endInput <- MP.getInput
   let startSpan = inputStartSpan startInput
-      endSpan = maybe noSourceSpan lexTokenSpan (tokStreamPrevToken endInput)
+      endSpan = tokStreamPrevSpan endInput
       parserSpan = mergeSourceSpans startSpan endSpan
   pure $ f parserSpan out
 {-# INLINE withSpanAnn #-}
@@ -481,7 +481,7 @@ withSpan parser = do
   out <- parser
   endInput <- MP.getInput
   let startSpan = inputStartSpan startInput
-      endSpan = maybe noSourceSpan lexTokenSpan (tokStreamPrevToken endInput)
+      endSpan = tokStreamPrevSpan endInput
       parserSpan = mergeSourceSpans startSpan endSpan
   pure (out parserSpan)
 {-# INLINE withSpan #-}

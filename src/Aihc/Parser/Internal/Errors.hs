@@ -5,7 +5,7 @@ module Aihc.Parser.Internal.Errors
 where
 
 import Aihc.Parser.Lex (LexToken (..), TokenOrigin (..))
-import Aihc.Parser.Syntax (SourceSpan (..))
+import Aihc.Parser.Syntax (SourceSpan (NoSourceSpan))
 import Aihc.Parser.Types (FoundToken (..), ParseErrorBundle, ParserErrorComponent (..), TokStream)
 import Data.List qualified as List
 import Data.List.NonEmpty qualified as NE

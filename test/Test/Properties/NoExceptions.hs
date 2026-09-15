@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Test.Properties.NoExceptions
@@ -31,7 +32,7 @@ import Aihc.Parser.Internal.Testing
     parsePatternFromTokens,
     parseTypeFromTokens,
   )
-import Aihc.Parser.Syntax (ExtensionSetting (..), FloatType (..), NumericType (..), SourceSpan (..))
+import Aihc.Parser.Syntax (ExtensionSetting (..), FloatType (..), NumericType (..), SourceSpan (NoSourceSpan), pattern SourceSpan)
 import Aihc.Parser.Syntax qualified as Syntax
 import Control.DeepSeq (NFData (..), force)
 import Control.Exception (SomeException, evaluate, try)

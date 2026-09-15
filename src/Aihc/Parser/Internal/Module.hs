@@ -21,9 +21,9 @@ import Aihc.Parser.Internal.Common
   )
 import Aihc.Parser.Internal.Decl (declParser)
 import Aihc.Parser.Internal.Import (importDeclParser, languagePragmaParser, moduleHeaderParser)
-import Aihc.Parser.Lex (LexToken (lexTokenSpan), LexTokenKind (..), lexTokenKind)
-import Aihc.Parser.Syntax (Decl, ImportDecl, Module (..), mergeSourceSpans, mkAnnotation, noSourceSpan)
-import Aihc.Parser.Types (TokStream (tokStreamPrevToken))
+import Aihc.Parser.Lex (LexTokenKind (..), lexTokenKind)
+import Aihc.Parser.Syntax (Decl, ImportDecl, Module (..), mergeSourceSpans, mkAnnotation)
+import Aihc.Parser.Types (TokStream (tokStreamPrevSpan))
 import Control.Monad (void)
 import Text.Megaparsec qualified as MP
 
@@ -49,7 +49,7 @@ moduleParser = do
           <* MP.lookAhead eofTok
       )
   MP.updateParserState (\state -> state {MP.stateParseErrors = MP.stateParseErrors finalState})
-  let endSpan = maybe noSourceSpan lexTokenSpan (tokStreamPrevToken (MP.stateInput finalState))
+  let endSpan = tokStreamPrevSpan (MP.stateInput finalState)
       moduleSpan = mergeSourceSpans (inputStartSpan startInput) endSpan
   pure
     Module

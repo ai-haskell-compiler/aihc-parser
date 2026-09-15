@@ -304,7 +304,7 @@ varOrConPatternParser = do
       | isConLikeName name && lexTokenKind nextTok == TkSpecialLBrace -> do
           (fields, hasWildcard) <- braces recordPatternFieldListParser
           endInput <- MP.getInput
-          let endSpan = maybe noSourceSpan lexTokenSpan (tokStreamPrevToken endInput)
+          let endSpan = tokStreamPrevSpan endInput
               recordSpan = mergeSourceSpans (lexTokenSpan tok) endSpan
           pure (PAnn (mkAnnotation recordSpan) (PRecord name fields hasWildcard))
     _ ->

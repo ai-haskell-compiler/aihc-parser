@@ -395,10 +395,9 @@ typeAtomParserByToken = do
     TkConId {} -> typeIdentifierParser
     TkQVarId {} -> typeIdentifierParser
     TkQConId {} -> typeIdentifierParser
-    _ -> do
-      thAny <- thAnyEnabled
-      ipEnabled <- isExtensionEnabled ImplicitParams
-      typeAtomParserAlternatives thAny ipEnabled
+    -- Every other alternative in 'typeAtomParserAlternatives' begins with a
+    -- token kind already dispatched above, so only these three can match.
+    _ -> MP.try promotedTypeParser <|> typeStarParser <|> typeIdentifierParser
 
 typeAtomParserAlternatives :: Bool -> Bool -> TokParser Type
 typeAtomParserAlternatives thAny ipEnabled =

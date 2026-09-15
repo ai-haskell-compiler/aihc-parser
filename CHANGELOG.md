@@ -12,14 +12,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that read the field get a `Text`; callers that build a `SourceSpan` by hand
   pass a `Text`. The name given as `parserSourceName` is still a `FilePath`
   and is converted once when lexing starts.
+- `SourceSpan` is now a bidirectional record pattern synonym over a packed
+  representation. Constructing a span, matching on one and reading any of its
+  seven fields all work exactly as before; what no longer compiles is record
+  *update* syntax (`span {sourceSpanStartLine = n}`), which pattern synonyms
+  do not support, and code that relies on the `Data` instance seeing seven
+  `Int` fields. Import it as `SourceSpan (NoSourceSpan), pattern SourceSpan`
+  plus the field names, since `SourceSpan (..)` no longer brings the fields
+  into scope.
+- `applyImpliedExtensions` returns its result in `Extension` constructor order
+  and without duplicates when it has anything to add, rather than in
+  most-recently-enabled-first order. Only membership was ever meaningful; a
+  list that is already closed is still returned untouched.
 
 ### Performance
 
-- `SourceSpan` is a flat record: the source name is a `Text` shared by every
-  span from the same file, and the six positions are unboxed `Int` fields.
-  Forcing a span with `rnf` is now constant time instead of walking the
-  source name character by character, which a consumer that `deepseq`s a
-  parse tree paid once per span.
+- `SourceSpan` is a flat, packed record: the source name is a `Text` shared by
+  every span from the same file, and the six positions live in three unboxed
+  `Word64` fields instead of six `Int` ones. Forcing a span with `rnf` is now
+  constant time instead of walking the source name character by character,
+  which a consumer that `deepseq`s a parse tree paid once per span, and the
+  most numerous object in a parse tree is a third smaller.
+- Expression parsing dispatches the block forms (`do`, `mdo`, qualified `do`,
+  `if`, `case`, `let`, `proc`, `\`) and prefix negation on the next token
+  instead of trying them in turn. Each block form starts with its own
+  keyword, so at most one could ever match, but the old chain of alternatives
+  allocated a continuation for all nine plus a backtracking negation at every
+  expression position.
+- The type-atom parser's fallback branch tries only the three alternatives
+  whose leading token is not already dispatched, instead of re-running the
+  full eleven-way chain.
+- The implied-extension fixpoint runs on the `ExtensionSet` bitset instead of
+  on lists, so closing a set costs word operations rather than a `filter` per
+  implication and a pair of `sort`s per round. It ran once per file.
+
+Together these cut the `bench-aihc-base` benchmark's allocation by about 21%
+(2.90 GB to 2.30 GB over five iterations), its wall time by about 12%
+(162 ms to 142 ms per iteration) and its peak heap by about 10%.
 
 ## [3.0.1.1] - 2026-09-15
 
