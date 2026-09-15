@@ -50,15 +50,19 @@ exprOrPatternBindParser exprP rhsP bindCtor exprCtor = do
     exprOrPattern = do
       expr <- exprP
       -- An expression can stop before a pattern-only argument or suffix.
-      MP.notFollowedBy $
-        expectedTok TkReservedAt
-          <|> expectedTok TkPrefixBang
-          <|> expectedTok TkPrefixTilde
-          <|> expectedTok TkReservedDoubleColon
-      mArrow <- MP.optional (expectedTok TkReservedLeftArrow)
-      case mArrow of
-        Just () -> Left <$> liftCheck (checkPattern expr)
-        Nothing -> pure (Right expr)
+      -- The four tokens that mean it did are recognized on the peeked token
+      -- rather than by four alternatives under 'MP.notFollowedBy'.
+      mKind <- peekTokenKind
+      case mKind of
+        Just TkReservedAt -> MP.empty
+        Just TkPrefixBang -> MP.empty
+        Just TkPrefixTilde -> MP.empty
+        Just TkReservedDoubleColon -> MP.empty
+        _ -> pure ()
+      hasArrow <- optionalTok TkReservedLeftArrow
+      if hasArrow
+        then Left <$> liftCheck (checkPattern expr)
+        else pure (Right expr)
 
     patternBind = do
       pat <- patternParser
@@ -127,10 +131,10 @@ data AtomContext
 -- no @->@ follows.
 maybeViewPattern :: Expr -> TokParser Expr
 maybeViewPattern lhs = do
-  mArrow <- MP.optional (expectedTok TkReservedRightArrow)
-  case mArrow of
-    Just () -> EViewPat lhs <$> texprParser
-    Nothing -> pure lhs
+  hasArrow <- optionalTok TkReservedRightArrow
+  if hasArrow
+    then EViewPat lhs <$> texprParser
+    else pure lhs
 
 -- | Like 'exprParser' but also allows the view-pattern arrow @->@ at the
 -- top level.  This corresponds to GHC\'s @texp@ production, which is used
@@ -212,7 +216,7 @@ procExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
 
 doStmtParser :: TokParser (DoStmt Expr)
 doStmtParser = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkKeywordLet -> MP.try doLetStmtParser <|> doBindOrExprStmtParser
     TkKeywordRec -> doRecStmtParser
@@ -248,16 +252,26 @@ doRecStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
 
 -- | Shared infix-chain parser used by the report core and contextual
 -- expression variants such as TransformListComp.
+--
+-- The operator is looked for on the peeked token first.  Every expression in
+-- the file ends by failing to find one more operator, and letting
+-- 'infixOperatorParser' fail made that failure cost a parse error and its
+-- hints.
 exprInfixChainParser :: TokParser Expr -> TokParser Expr
 exprInfixChainParser lexp = do
   lhs <- lexp
-  rest <-
-    MP.many
-      ( (,)
-          <$> infixOperatorParser
-          <*> region "after infix operator" lexp
-      )
+  rest <- MP.many infixOperatorAndOperand
   pure (foldInfixL buildInfix lhs rest)
+  where
+    infixOperatorAndOperand = do
+      mKind <- peekTokenKind
+      case mKind of
+        Just kind
+          | startsInfixOperator kind ->
+              (,)
+                <$> infixOperatorParser
+                <*> region "after infix operator" lexp
+        _ -> MP.empty
 
 -- | Report core:
 --
@@ -287,7 +301,7 @@ lexpParserWith atomContext = do
 -- negation before reaching the application parser that almost always wins.
 lexpBaseParserWith :: AtomContext -> TokParser Expr -> TokParser Expr
 lexpBaseParserWith atomContext appParser = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     kind
       | Just blockParser <- lexpBlockParserForToken atomContext kind -> blockParser
@@ -320,7 +334,7 @@ lexpBlockParser = lexpBlockParserWith NormalExprAtom
 
 lexpBlockParserWith :: AtomContext -> TokParser Expr
 lexpBlockParserWith atomContext = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   fromMaybe MP.empty (lexpBlockParserForToken atomContext (lexTokenKind tok))
 
 -- | The block parser a token can start, if any.  Each block form begins with
@@ -419,13 +433,15 @@ appExprParserWith atomParser = do
     appArg = (Left <$> typeAppArg) <|> (Right <$> appExprArgParser)
 
     typeAppArg :: TokParser Type
-    typeAppArg = MP.try $ do
-      expectedTok TkTypeApp
-      typeAtomParser
+    typeAppArg = do
+      hasAt <- nextTokenIs TkTypeApp
+      if hasAt
+        then MP.try (expectedTok TkTypeApp *> typeAtomParser)
+        else MP.empty
 
     appExprArgParser :: TokParser Expr
     appExprArgParser = do
-      tok <- lookAhead anySingle
+      tok <- peekToken
       case lexTokenKind tok of
         -- GHC rejects bare explicit namespace syntax as a function argument:
         -- @f type T@ is invalid, while @f (type T)@ is accepted syntactically.
@@ -451,20 +467,35 @@ appExprParserWith atomParser = do
 atomOrRecordExprParser :: TokParser Expr
 atomOrRecordExprParser = atomOrRecordExprParserWith NormalExprAtom
 
+-- | The record-base atom parser accepts exactly the @aexp@ forms, so for any
+-- other leading token it fails without consuming input and the atom parser
+-- has to be run instead.  Which of the two applies is decided by the next
+-- token, rather than by trying the record path and letting it fail: this
+-- parser runs at every atom position, and the failing alternative allocated a
+-- continuation and an error for each one.
 atomOrRecordExprParserWith :: AtomContext -> TokParser Expr
-atomOrRecordExprParserWith atomContext =
-  recordExprParser <|> atomExprParserWith atomContext
+atomOrRecordExprParserWith atomContext = do
+  tok <- peekToken
+  if startsAtomOnlyForm atomContext (lexTokenKind tok)
+    then atomExprParserWith atomContext
+    else recordExprParser
   where
     recordExprParser :: TokParser Expr
     recordExprParser = do
       base <- recordBaseAtomExprParserWith atomContext
       applyRecordSuffixes base
 
+    -- Record braces and record dots are suffixes on an atom that almost
+    -- never follow it, so both are decided on the peeked token.  Running
+    -- 'recordBracesParser' under 'MP.optional' meant every atom in the file
+    -- paid for a failed brace parse.
     applyRecordSuffixes :: Expr -> TokParser Expr
     applyRecordSuffixes e = do
-      mRecordFields <- MP.optional recordBracesParser
-      case mRecordFields of
-        Just (fields, hasWildcard) -> do
+      hasBrace <- nextTokenIs TkSpecialLBrace
+      if not hasBrace
+        then applyRecordDotSuffixes e
+        else do
+          (fields, hasWildcard) <- recordBracesParser
           let result = case peelExprAnn e of
                 EVar name
                   | isConLikeName name ->
@@ -472,18 +503,18 @@ atomOrRecordExprParserWith atomContext =
                 _ ->
                   ERecordUpd e (map normalizeField fields)
           applyRecordSuffixes result
-        Nothing -> applyRecordDotSuffixes e
 
     applyRecordDotSuffixes :: Expr -> TokParser Expr
     applyRecordDotSuffixes e = do
-      recordDotEnabled <- isExtensionEnabled OverloadedRecordDot
-      if not recordDotEnabled || not (recordDotMayFollow e)
+      hasDot <- nextTokenIs TkRecordDot
+      if not hasDot || not (recordDotMayFollow e)
         then pure e
         else do
-          mDot <- MP.optional (expectedTok TkRecordDot)
-          case mDot of
-            Nothing -> pure e
-            Just () -> do
+          recordDotEnabled <- isExtensionEnabled OverloadedRecordDot
+          if not recordDotEnabled
+            then pure e
+            else do
+              expectedTok TkRecordDot
               fieldName <- recordFieldNameParser
               applyRecordSuffixes (EGetField e fieldName)
 
@@ -511,7 +542,7 @@ recordBracesParser =
 recordFieldBindingParser :: TokParser (Name, Maybe Expr, SourceSpan)
 recordFieldBindingParser = withSpan $ do
   fieldName <- recordFieldNameParser
-  mAssign <- MP.optional (expectedTok TkReservedEquals *> exprParser)
+  mAssign <- optionalTokThen TkReservedEquals exprParser
   pure (fieldName,mAssign,)
 
 -- | Parse the expression forms that correspond to the report's @aexp@
@@ -531,7 +562,7 @@ recordFieldBindingParser = withSpan $ do
 -- >      | aexp<qcon> '{' fbind_1 ',' ... ',' fbind_n '}'
 recordBaseAtomExprParserWith :: AtomContext -> TokParser Expr
 recordBaseAtomExprParserWith atomContext = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkImplicitParam {} -> implicitParamExprParser
     _ -> simpleAtomExprParserWith atomContext
@@ -542,12 +573,29 @@ recordBaseAtomExprParserWith atomContext = do
 --
 -- This variant also admits extension-only atoms such as block arguments and
 -- explicit namespace syntax when the corresponding extensions are enabled.
+-- | Whether a token starts an expression form that is not an @aexp@, and so
+-- can never be a record construction or update base.
+startsAtomOnlyForm :: AtomContext -> LexTokenKind -> Bool
+startsAtomOnlyForm atomContext kind =
+  case kind of
+    TkKeywordType -> True
+    TkReservedBackslash -> True
+    TkKeywordLet -> True
+    TkKeywordDo -> True
+    TkKeywordMdo -> True
+    TkQualifiedDo {} -> True
+    TkQualifiedMdo {} -> True
+    TkKeywordCase -> True
+    TkKeywordIf -> True
+    TkKeywordProc -> atomContext == NormalExprAtom
+    _ -> False
+
 atomExprParser :: TokParser Expr
 atomExprParser = atomExprParserWith NormalExprAtom
 
 atomExprParserWith :: AtomContext -> TokParser Expr
 atomExprParserWith atomContext = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkImplicitParam {} -> implicitParamExprParser
     TkKeywordType -> do
@@ -576,10 +624,19 @@ atomExprParserWith atomContext = do
 
 simpleAtomExprParserWith :: AtomContext -> TokParser Expr
 simpleAtomExprParserWith atomContext = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkPrefixMinus -> prefixNegateAtomExprParserWith atomContext
-    TkSpecialLParen -> MP.try parenOperatorExprParser <|> parenExprParser
+    -- @(+)@ and @(x + y)@ both start with @(@, and only the second token
+    -- tells them apart.  Without that check every parenthesized expression
+    -- paid for a failed 'parenOperatorExprParser' parse first.
+    TkSpecialLParen -> do
+      mAfterParen <- lookAhead (MP.optional (anySingle *> anySingle))
+      case lexTokenKind <$> mAfterParen of
+        Just afterParen
+          | startsParenOperator afterParen ->
+              MP.try parenOperatorExprParser <|> parenExprParser
+        _ -> parenExprParser
     TkSpecialUnboxedLParen -> parenExprParser
     TkSpecialLBracket -> listExprParser
     TkInteger {} -> intExprParser
@@ -649,6 +706,20 @@ prefixMinusTokenParser =
       TkPrefixMinus -> Just ()
       _ -> Nothing
 
+-- | Whether a token can be the operator of a parenthesized operator
+-- expression such as @(+)@; see 'operatorExprNameParser'.
+startsParenOperator :: LexTokenKind -> Bool
+startsParenOperator kind =
+  case kind of
+    TkVarSym {} -> True
+    TkConSym {} -> True
+    TkQVarSym {} -> True
+    TkQConSym {} -> True
+    TkMinusOperator -> True
+    TkReservedColon -> True
+    TkReservedAt -> True
+    _ -> False
+
 parenOperatorExprParser :: TokParser Expr
 parenOperatorExprParser =
   withSpanAnn (EAnn . mkAnnotation) $
@@ -705,7 +776,7 @@ rhsArrowTok RhsArrowEquation = expectedTok TkReservedEquals
 
 rhsParserWithBodyParser :: RhsArrowKind -> TokParser body -> TokParser (Rhs body)
 rhsParserWithBodyParser arrowKind bodyParser = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkReservedPipe -> guardedRhssParserWithBodyParser arrowKind bodyParser
     TkReservedRightArrow | RhsArrowCase <- arrowKind -> unguardedRhsParserWithBodyParser arrowKind bodyParser
@@ -756,7 +827,7 @@ guardedRhsParserWithBodyParser arrowKind bodyParser = withSpan $ do
 -- >       | infixexp
 guardQualifierParser :: RhsArrowKind -> TokParser GuardQualifier
 guardQualifierParser arrowKind = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkKeywordLet -> MP.try guardLetParser <|> guardBindOrExprParser arrowKind
     _ -> guardBindOrExprParser arrowKind
@@ -817,10 +888,10 @@ caseExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
 parenExprParser :: TokParser Expr
 parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
   (tupleFlavor, closeTok) <- tupleDelimsParser
-  mClosed <- MP.optional (expectedTok closeTok)
-  case mClosed of
-    Just () -> pure (ETuple tupleFlavor [])
-    Nothing ->
+  closedImmediately <- optionalTok closeTok
+  if closedImmediately
+    then pure (ETuple tupleFlavor [])
+    else
       if tupleFlavor == Boxed
         then MP.try (parseNegateParen closeTok) <|> parseBoxedContent closeTok
         else MP.try (parseUnboxedSumExprLeadingBars closeTok) <|> parseTupleOrParen tupleFlavor closeTok
@@ -845,7 +916,7 @@ parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
               )
           )
       let withInfix = foldInfixL buildInfix negBase rest
-      mTypeSig <- MP.optional (expectedTok TkReservedDoubleColon *> typeSignatureParser)
+      mTypeSig <- optionalTokThen TkReservedDoubleColon typeSignatureParser
       let typed = case mTypeSig of
             Just ty -> ETypeSig withInfix ty
             Nothing -> withInfix
@@ -884,7 +955,7 @@ parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
                     Just op ->
                       pure (EParen (ESectionL base op))
                     Nothing -> do
-                      mTypeSig <- MP.optional (expectedTok TkReservedDoubleColon *> typeSignatureParser)
+                      mTypeSig <- optionalTokThen TkReservedDoubleColon typeSignatureParser
                       let typed = case mTypeSig of
                             Just ty -> ETypeSig base ty
                             Nothing -> base
@@ -892,11 +963,10 @@ parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
                       finalExpr <- maybeViewPattern typed
                       finishBoxed closeTok (Just finalExpr)
                 Just op -> do
-                  mClose <- MP.optional (expectedTok closeTok)
-                  case mClose of
-                    Just () ->
-                      pure (EParen (ESectionL base op))
-                    Nothing -> do
+                  closedAfterOperator <- optionalTok closeTok
+                  if closedAfterOperator
+                    then pure (EParen (ESectionL base op))
+                    else do
                       rhs <- region "after infix operator" lexpParser
                       more <-
                         MP.many
@@ -913,7 +983,7 @@ parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
                           expectedTok closeTok
                           pure (EParen (ESectionL fullInfix trailOp))
                         Nothing -> do
-                          mTypeSig <- MP.optional (expectedTok TkReservedDoubleColon *> typeSignatureParser)
+                          mTypeSig <- optionalTokThen TkReservedDoubleColon typeSignatureParser
                           let typed = case mTypeSig of
                                 Just ty -> ETypeSig fullInfix ty
                                 Nothing -> fullInfix
@@ -946,49 +1016,49 @@ parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
               _ -> Nothing
 
     finishBoxed closeTok mFirst = do
-      mComma <- MP.optional (expectedTok TkSpecialComma)
-      case (mFirst, mComma) of
-        (Just e, Nothing) -> do
+      hasComma <- optionalTok TkSpecialComma
+      case (mFirst, hasComma) of
+        (Just e, False) -> do
           expectedTok closeTok
           pure (EParen e)
-        (_, Just ()) -> do
+        (_, True) -> do
           rest <- parseTupleElems closeTok
           pure (ETuple Boxed (mFirst : rest))
-        (Nothing, Nothing) ->
+        (Nothing, False) ->
           fail "expected expression or closing paren"
 
     parseTupleOrParen tupleFlavor closeTok = do
       first <- MP.optional texprParser
-      mComma <- MP.optional (expectedTok TkSpecialComma)
-      case (first, mComma) of
-        (Just e, Nothing) ->
+      hasComma <- optionalTok TkSpecialComma
+      case (first, hasComma) of
+        (Just e, False) ->
           case tupleFlavor of
             Boxed -> do
               expectedTok closeTok
               pure (EParen e)
             Unboxed -> do
-              mPipe <- MP.optional (expectedTok TkReservedPipe)
-              case mPipe of
-                Just () -> do
+              hasPipe <- optionalTok TkReservedPipe
+              if hasPipe
+                then do
                   trailingBars <- MP.many (expectedTok TkReservedPipe)
                   expectedTok closeTok
                   let arity = 2 + length trailingBars
                   pure (EUnboxedSum 0 arity e)
-                Nothing -> do
+                else do
                   expectedTok closeTok
                   pure (ETuple Unboxed [Just e])
-        (_, Just ()) -> do
+        (_, True) -> do
           rest <- parseTupleElems closeTok
           pure (ETuple tupleFlavor (first : rest))
-        (Nothing, Nothing) ->
+        (Nothing, False) ->
           fail "expected expression or closing paren"
 
     parseTupleElems closeTok = do
       e <- MP.optional texprParser
-      mComma <- MP.optional (expectedTok TkSpecialComma)
-      case mComma of
-        Just () -> (e :) <$> parseTupleElems closeTok
-        Nothing -> do
+      hasComma <- optionalTok TkSpecialComma
+      if hasComma
+        then (e :) <$> parseTupleElems closeTok
+        else do
           expectedTok closeTok
           pure [e]
 
@@ -1005,10 +1075,10 @@ parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
 listExprParser :: TokParser Expr
 listExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
   expectedTok TkSpecialLBracket
-  mClose <- MP.optional (expectedTok TkSpecialRBracket)
-  case mClose of
-    Just () -> pure (EList [])
-    Nothing -> do
+  closedImmediately <- optionalTok TkSpecialRBracket
+  if closedImmediately
+    then pure (EList [])
+    else do
       first <- exprParser
       parseListTail first
 
@@ -1061,7 +1131,7 @@ parseListTail first = listCompTailParser <|> arithFromToTailParser <|> commaTail
 
 compStmtParser :: TokParser CompStmt
 compStmtParser = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkKeywordLet -> MP.try compLetStmtParser <|> compGenOrGuardParser
     TkKeywordThen -> compTransformStmtParser <|> compGenOrGuardParser
@@ -1076,7 +1146,7 @@ compTransformStmtParser = MP.try $ withSpanAnn (CompAnn . mkAnnotation) $ do
   guard enabled
   expectedTok TkKeywordThen
   -- Check for 'group' forms first
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkVarId "group" -> compGroupStmtParser
     _ -> compThenStmtParser
@@ -1085,7 +1155,7 @@ compTransformStmtParser = MP.try $ withSpanAnn (CompAnn . mkAnnotation) $ do
 compGroupStmtParser :: TokParser CompStmt
 compGroupStmtParser = do
   varIdTok "group"
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkKeywordBy -> do
       expectedTok TkKeywordBy
@@ -1103,10 +1173,10 @@ compGroupStmtParser = do
 compThenStmtParser :: TokParser CompStmt
 compThenStmtParser = do
   f <- compTransformExprParser
-  mBy <- MP.optional (expectedTok TkKeywordBy)
-  case mBy of
-    Just () -> CompThenBy f <$> exprParser
-    Nothing -> pure (CompThen f)
+  hasBy <- optionalTok TkKeywordBy
+  if hasBy
+    then CompThenBy f <$> exprParser
+    else pure (CompThen f)
 
 -- | Expression parser for TransformListComp context.
 -- Parses an expression but treats bare 'by' and 'using' as terminators
@@ -1193,7 +1263,7 @@ compTransformNegateOperandParser = reportLexpParser compTransformAppExprParser
 -- These are treated as contextual keywords in TransformListComp context.
 compTransformAtomOrRecordExprParser :: TokParser Expr
 compTransformAtomOrRecordExprParser = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkKeywordBy -> MP.empty
     TkKeywordUsing -> MP.empty
@@ -1299,7 +1369,7 @@ localPatternDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
 localMultiplicityTagParser :: TokParser MultiplicityTag
 localMultiplicityTagParser = do
   expectedTok TkPrefixPercent
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkInteger 1 _ -> anySingle $> LinearMultiplicityTag
     _ -> ExplicitMultiplicityTag <$> typeAtomParser
@@ -1377,7 +1447,7 @@ thTypedSpliceParser = withSpanAnn (EAnn . mkAnnotation) $ do
 
 compactSpliceBodyParser :: TokParser Expr
 compactSpliceBodyParser = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkReservedBackslash -> MP.empty
     TkKeywordLet -> MP.empty

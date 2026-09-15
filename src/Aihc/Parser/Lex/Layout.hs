@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Aihc.Parser.Lex.Layout
@@ -65,12 +66,14 @@ applyLayoutTokens enableModuleLayout exts =
           case layoutPrevTokenEndSpan st of
             Nothing -> []
             Just eofAnchor ->
-              let (moduleInserted, stAfterModule) = finalizeModuleLayoutAtEOF st eofAnchor
-                  (pendingInserted, stAfterPending) = flushPendingCaseLayoutAtEOF stAfterModule eofAnchor
-               in moduleInserted <> pendingInserted <> closeAllImplicit (layoutContexts stAfterPending) eofAnchor
+              case finalizeModuleLayoutAtEOF st eofAnchor of
+                (moduleInserted, stAfterModule) ->
+                  case flushPendingCaseLayoutAtEOF stAfterModule eofAnchor of
+                    (pendingInserted, stAfterPending) ->
+                      moduleInserted <> pendingInserted <> closeAllImplicit (layoutContexts stAfterPending) eofAnchor
         tok : rest ->
-          let (emitted, stNext) = layoutTransition st tok
-           in emitted <> go stNext rest
+          case layoutTransition st tok of
+            (emitted, stNext) -> emitted <> go stNext rest
 
 finalizeModuleLayoutAtEOF :: LayoutState -> SourceSpan -> ([LexToken], LayoutState)
 finalizeModuleLayoutAtEOF st anchor =
@@ -178,9 +181,10 @@ closeBeforeToken st tok =
   case lexTokenKind tok of
     kind
       | closesImplicitBeforeDelimiter kind ->
-          let (pendingInserted, st0) = flushPendingImplicitLayout st anchor
-              (inserted, ctxs') = closeImplicitLayouts anchor (\_ _ -> True) (layoutContexts st0)
-           in (pendingInserted <> inserted, st0 {layoutContexts = ctxs'})
+          case flushPendingImplicitLayout st anchor of
+            (pendingInserted, st0) ->
+              case closeImplicitLayouts anchor (\_ _ -> True) (layoutContexts st0) of
+                (inserted, ctxs') -> (pendingInserted <> inserted, st0 {layoutContexts = ctxs'})
       | closesImplicitBeforeLayoutKeyword kind ->
           closeBeforeLayoutKeyword
     _ -> ([], st)
@@ -188,10 +192,11 @@ closeBeforeToken st tok =
     anchor = lexTokenSpan tok
 
     closeBeforeLayoutKeyword =
-      let col = tokenStartCol tok
-          (pendingInserted, st0) = flushPendingImplicitLayout st anchor
-          (inserted, ctxs') = closeImplicitLayouts anchor (shouldClose col) (layoutContexts st0)
-       in (pendingInserted <> inserted, st0 {layoutContexts = ctxs'})
+      let !col = tokenStartCol tok
+       in case flushPendingImplicitLayout st anchor of
+            (pendingInserted, st0) ->
+              case closeImplicitLayouts anchor (shouldClose col) (layoutContexts st0) of
+                (inserted, ctxs') -> (pendingInserted <> inserted, st0 {layoutContexts = ctxs'})
 
     shouldClose col indent kind =
       col < indent || (col == indent && closesSameColumnLayout kind)
@@ -232,18 +237,20 @@ bolLayout :: LayoutState -> LexToken -> ([LexToken], LayoutState)
 bolLayout st tok
   | not (isBOL st tok) = ([], st)
   | otherwise =
-      let col = tokenStartCol tok
-          (inserted, contexts') = closeImplicitLayouts (lexTokenSpan tok) (\indent _ -> col < indent) (layoutContexts st)
-          semiAnchor = fromMaybe (lexTokenSpan tok) (layoutPrevTokenEndSpan st)
-          eqSemi =
-            case currentLayoutIndentMaybe contexts' of
-              Just indent
-                | col == indent,
-                  currentLayoutAllowsSemicolon contexts',
-                  lexTokenKind tok /= TkKeywordWhere ->
-                    [virtualSymbolToken ";" semiAnchor]
-              _ -> []
-       in (inserted <> eqSemi, st {layoutContexts = contexts'})
+      case closeImplicitLayouts (lexTokenSpan tok) (\indent _ -> col < indent) (layoutContexts st) of
+        (inserted, contexts') ->
+          let semiAnchor = fromMaybe (lexTokenSpan tok) (layoutPrevTokenEndSpan st)
+              eqSemi =
+                case currentLayoutIndentMaybe contexts' of
+                  Just indent
+                    | col == indent,
+                      currentLayoutAllowsSemicolon contexts',
+                      lexTokenKind tok /= TkKeywordWhere ->
+                        [virtualSymbolToken ";" semiAnchor]
+                  _ -> []
+           in (inserted <> eqSemi, st {layoutContexts = contexts'})
+  where
+    !col = tokenStartCol tok
 
 currentLayoutAllowsSemicolon :: [LayoutContext] -> Bool
 currentLayoutAllowsSemicolon contexts =
@@ -435,30 +442,50 @@ layoutTransition st tok =
     TkLineComment -> ([tok], st)
     TkBlockComment -> ([tok], st)
     TkEOF ->
-      let eofAnchor = fromMaybe (lexTokenSpan tok) (layoutPrevTokenEndSpan st)
-          (moduleInserted, stAfterModule) = finalizeModuleLayoutAtEOF st eofAnchor
-          (pendingInserted, stAfterPending) = flushPendingCaseLayoutAtEOF stAfterModule eofAnchor
-       in ( moduleInserted <> pendingInserted <> closeAllImplicit (layoutContexts stAfterPending) eofAnchor <> [tok],
-            stAfterPending {layoutContexts = [], layoutBuffer = []}
-          )
+      let !eofAnchor = fromMaybe (lexTokenSpan tok) (layoutPrevTokenEndSpan st)
+       in case finalizeModuleLayoutAtEOF st eofAnchor of
+            (moduleInserted, stAfterModule) ->
+              case flushPendingCaseLayoutAtEOF stAfterModule eofAnchor of
+                (pendingInserted, stAfterPending) ->
+                  ( moduleInserted <> pendingInserted <> closeAllImplicit (layoutContexts stAfterPending) eofAnchor <> [tok],
+                    stAfterPending {layoutContexts = [], layoutBuffer = []}
+                  )
     _ ->
-      let stModule = noteModuleLayoutBeforeToken st tok
-          (preInserted, stBeforePending) = closeBeforeToken stModule tok
-          (pendingInserted, stAfterPending, skipBOL) = openPendingLayout stBeforePending tok
-          (bolInserted, stAfterBOL) = if skipBOL then ([], stAfterPending) else bolLayout stAfterPending tok
-          stAfterToken = noteModuleLayoutAfterToken (stepTokenContext stAfterBOL tok) tok
-          newEndSpan =
-            if lexTokenOrigin tok == FromSource
-              then Just (lexTokenSpan tok)
-              else layoutPrevTokenEndSpan stAfterToken
-          stNext =
-            stAfterToken
-              { layoutPrevTokenKind = Just (lexTokenKind tok),
-                layoutPrevTokenEndSpan = newEndSpan,
-                layoutBuffer = []
-              }
-       in (preInserted <> pendingInserted <> bolInserted <> [tok], stNext)
+      -- Every intermediate result is matched with 'case' rather than a lazy
+      -- tuple pattern.  A lazy pattern binding here would allocate the pair
+      -- plus a selector thunk per component, on every token of every file;
+      -- matching strictly lets GHC unbox the pairs away entirely.
+      case closeBeforeToken (noteModuleLayoutBeforeToken st tok) tok of
+        (preInserted, stBeforePending) ->
+          case openPendingLayout stBeforePending tok of
+            (pendingInserted, stAfterPending, skipBOL) ->
+              case (if skipBOL then ([], stAfterPending) else bolLayout stAfterPending tok) of
+                (bolInserted, stAfterBOL) ->
+                  let !stAfterToken = noteModuleLayoutAfterToken (stepTokenContext stAfterBOL tok) tok
+                      newEndSpan =
+                        if lexTokenOrigin tok == FromSource
+                          then Just (lexTokenSpan tok)
+                          else layoutPrevTokenEndSpan stAfterToken
+                      !stNext =
+                        stAfterToken
+                          { layoutPrevTokenKind = Just (lexTokenKind tok),
+                            layoutPrevTokenEndSpan = newEndSpan,
+                            layoutBuffer = []
+                          }
+                   in (prependInserted preInserted pendingInserted bolInserted tok, stNext)
 {-# INLINE layoutTransition #-}
+
+-- | The emitted token list for one ordinary token: the virtual tokens the
+-- transition inserted, in order, followed by the token itself.
+--
+-- The overwhelmingly common case is that no virtual token was inserted at all,
+-- and spelling that case out avoids building three @(++)@ thunks per token.
+prependInserted :: [LexToken] -> [LexToken] -> [LexToken] -> LexToken -> [LexToken]
+prependInserted preInserted pendingInserted bolInserted tok =
+  case (preInserted, pendingInserted, bolInserted) of
+    ([], [], []) -> [tok]
+    _ -> preInserted <> (pendingInserted <> (bolInserted <> [tok]))
+{-# INLINE prependInserted #-}
 
 closeImplicitLayoutContext :: LayoutState -> Maybe LayoutState
 closeImplicitLayoutContext st =

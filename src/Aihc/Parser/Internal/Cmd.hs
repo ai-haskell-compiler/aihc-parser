@@ -12,7 +12,7 @@ import Aihc.Parser.Internal.Pattern (apatParser, caseAltPatternParser, patternPa
 import Aihc.Parser.Lex (LexTokenKind (..), lexTokenKind)
 import Aihc.Parser.Syntax
 import Aihc.Parser.Types (ParserErrorComponent (..), mkFoundToken)
-import Text.Megaparsec (anySingle, lookAhead, (<|>))
+import Text.Megaparsec ((<|>))
 import Text.Megaparsec qualified as MP
 
 -- | Parse a command (the body of a @proc@ abstraction).
@@ -27,7 +27,7 @@ import Text.Megaparsec qualified as MP
 -- @
 cmdParser :: TokParser Cmd
 cmdParser = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkKeywordDo -> cmd0Parser
     TkKeywordIf -> cmd0Parser
@@ -52,7 +52,7 @@ cmd0Parser = do
 
 cmd10Parser :: TokParser Cmd
 cmd10Parser = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkKeywordDo -> cmdDoParser
     TkKeywordIf -> cmdIfParser
@@ -145,7 +145,7 @@ cmdParenParser =
 -- | Parse a do-statement in command context (arrow do).
 cmdStmtParser :: TokParser (DoStmt Cmd)
 cmdStmtParser = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkKeywordLet -> MP.try cmdLetStmtParser <|> cmdBodyStmtParser
     TkKeywordRec -> cmdRecStmtParser
@@ -174,17 +174,17 @@ cmdBindOrBodyStmtParser :: TokParser (DoStmt Cmd)
 cmdBindOrBodyStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
   -- Arrow tails (-<, -<<) belong to the command level, not the expression.
   expr <- exprParser
-  mArrow <- MP.optional (expectedTok TkReservedLeftArrow)
-  case mArrow of
-    Just () -> DoBind <$> liftCheck (checkPattern expr) <*> cmdParser
-    Nothing -> do
+  hasArrow <- optionalTok TkReservedLeftArrow
+  if hasArrow
+    then DoBind <$> liftCheck (checkPattern expr) <*> cmdParser
+    else do
       -- No bind arrow: this is a body statement.  Check for arrow tail.
       mArrTail <- MP.optional cmdArrTailParser
       case mArrTail of
         Just (appType, rhs) ->
           pure (DoExpr (CmdArrApp expr appType rhs))
         Nothing -> do
-          mTok <- MP.optional (lookAhead anySingle)
+          mTok <- peekTokenMaybe
           MP.customFailure
             UnexpectedTokenExpecting
               { unexpectedFound = mkFoundToken <$> mTok,

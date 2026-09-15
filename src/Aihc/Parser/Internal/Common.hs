@@ -5,6 +5,13 @@ module Aihc.Parser.Internal.Common
     label,
     region,
     expectedTok,
+    peekToken,
+    peekTokenMaybe,
+    peekTokenKind,
+    nextTokenIs,
+    tokenKindDispatch,
+    optionalTok,
+    optionalTokThen,
     eofTok,
     varIdTok,
     tokenSatisfy,
@@ -73,6 +80,7 @@ module Aihc.Parser.Internal.Common
     isConLikeNameType,
     liftCheck,
     infixOperatorParser,
+    startsInfixOperator,
     foldInfixL,
     foldInfixR,
   )
@@ -92,32 +100,43 @@ import Data.Text qualified as T
 import Text.Megaparsec (Parsec, anySingle, lookAhead, (<|>))
 import Text.Megaparsec qualified as MP
 import Text.Megaparsec.Error qualified as MPE
+import Text.Megaparsec.Internal qualified as MPI
 
 type TokParser = Parsec ParserErrorComponent TokStream
 
+-- | Replace whatever error a parser reports with one that names what was
+-- expected here and what was found instead.
+--
+-- Written as a primitive rather than as 'MP.observing' followed by a case:
+-- the labelled parsers are the hot ones — every expression, every right-hand
+-- side, every type — and this way a successful parse hands its result
+-- straight to the caller's continuation, with no 'Either' box and no bind.
+-- The failure continuations see the state the failure happened in, so the
+-- token that was found is read from that state rather than looked ahead for.
 label :: Text -> TokParser a -> TokParser a
-label expected parser = do
-  outcome <- MP.observing parser
-  case outcome of
-    Right parsed -> pure parsed
-    Left err ->
+label expected parser =
+  MPI.ParsecT $ \s cok cerr eok eerr ->
+    MPI.unParser parser s cok (relabel cerr) eok (relabel eerr)
+  where
+    relabel report err errState =
       case err of
-        MPE.TrivialError off _ _ -> do
-          mTok <- MP.optional (lookAhead anySingle)
-          let mFound = mkFoundToken <$> mTok
-          MP.parseError $
-            MPE.FancyError
-              off
-              ( Set.singleton
-                  ( MPE.ErrorCustom
-                      UnexpectedTokenExpecting
-                        { unexpectedFound = mFound,
-                          unexpectedExpecting = expected,
-                          unexpectedContext = []
-                        }
-                  )
-              )
-        _ -> MP.parseError err
+        MPE.TrivialError off _ _ ->
+          report
+            ( MPE.FancyError
+                off
+                ( Set.singleton
+                    ( MPE.ErrorCustom
+                        UnexpectedTokenExpecting
+                          { unexpectedFound =
+                              mkFoundToken . fst <$> tokStreamNext (MP.stateInput errState),
+                            unexpectedExpecting = expected,
+                            unexpectedContext = []
+                          }
+                    )
+                )
+            )
+            errState
+        _ -> report err errState
 
 region :: Text -> TokParser a -> TokParser a
 region context =
@@ -142,6 +161,84 @@ expectedTok expected =
   tokenSatisfy (renderTokenKind expected) $ \tok ->
     if lexTokenKind tok == expected then Just () else Nothing
 {-# INLINE expectedTok #-}
+
+-- | The next token, without consuming it.
+--
+-- Fails at the end of the stream with the same error as @lookAhead
+-- anySingle@, which is what every dispatch point used before: this is that
+-- parser with the 'MP.lookAhead' state save and restore and the 'MP.token'
+-- machinery replaced by a read of the stream's memoized successor.
+peekToken :: TokParser LexToken
+peekToken =
+  MPI.ParsecT $ \s _ _ eok eerr ->
+    case tokStreamNext (MP.stateInput s) of
+      Just (tok, _) -> eok tok s mempty
+      Nothing -> eerr (MPE.TrivialError (MP.stateOffset s) (Just MPE.EndOfInput) Set.empty) s
+{-# INLINE peekToken #-}
+
+-- | The next token, or 'Nothing' at the end of the stream.
+peekTokenMaybe :: TokParser (Maybe LexToken)
+peekTokenMaybe =
+  MPI.ParsecT $ \s _ _ eok _ ->
+    eok (fst <$> tokStreamNext (MP.stateInput s)) s mempty
+{-# INLINE peekTokenMaybe #-}
+
+-- | The kind of the next token, without consuming it and without building a
+-- parse error when there is none.
+peekTokenKind :: TokParser (Maybe LexTokenKind)
+peekTokenKind = MPI.ParsecT $ \s _ _ eok _ -> eok (nextTokenKind s) s mempty
+{-# INLINE peekTokenKind #-}
+
+-- | Whether the next token has the given kind, without consuming it.
+nextTokenIs :: LexTokenKind -> TokParser Bool
+nextTokenIs expected =
+  MPI.ParsecT $ \s _ _ eok _ -> eok (nextTokenKind s == Just expected) s mempty
+{-# INLINE nextTokenIs #-}
+
+-- | Run the parser that the next token's kind selects.
+--
+-- 'Nothing' means the stream is exhausted, which only happens once 'TkEOF'
+-- has been consumed.
+tokenKindDispatch :: (Maybe LexTokenKind -> TokParser a) -> TokParser a
+tokenKindDispatch select =
+  MPI.ParsecT $ \s cok cerr eok eerr ->
+    MPI.unParser (select (nextTokenKind s)) s cok cerr eok eerr
+{-# INLINE tokenKindDispatch #-}
+
+nextTokenKind :: MP.State TokStream e -> Maybe LexTokenKind
+nextTokenKind s =
+  case tokStreamNext (MP.stateInput s) of
+    Just (tok, _) -> Just (lexTokenKind tok)
+    Nothing -> Nothing
+{-# INLINE nextTokenKind #-}
+
+-- | Consume the next token if it has the given kind, reporting whether it
+-- did.
+--
+-- Behaves exactly like @MP.optional (expectedTok expected)@ — including at
+-- the end of the stream, where both leave the input alone — but decides on
+-- the peeked token instead of recovering from a failed parse.
+optionalTok :: LexTokenKind -> TokParser Bool
+optionalTok expected =
+  tokenKindDispatch $ \mKind ->
+    if mKind == Just expected
+      then True <$ expectedTok expected
+      else pure False
+{-# INLINE optionalTok #-}
+
+-- | Like @MP.optional (expectedTok expected *> parser)@, but decided on the
+-- peeked token.
+--
+-- The behaviour is identical, including when @parser@ fails after the token
+-- was consumed: the failure propagates, because input was consumed either
+-- way.  Pass @pure ()@ for a bare optional token.
+optionalTokThen :: LexTokenKind -> TokParser a -> TokParser (Maybe a)
+optionalTokThen expected parser =
+  tokenKindDispatch $ \mKind ->
+    if mKind == Just expected
+      then Just <$> (expectedTok expected *> parser)
+      else pure Nothing
+{-# INLINE optionalTokThen #-}
 
 -- | Match the end-of-file token.
 --
@@ -716,7 +813,7 @@ contextItemParserWith typeParser typeAtomParser =
       first <- constraintTypeAppParser
       rest <- MP.many ((,) <$> constraintTypeInfixOperatorParser <*> constraintTypeAppParser)
       let baseType = foldInfixR buildInfixType first rest
-      mRhs <- MP.optional (expectedTok TkReservedRightArrow *> kindTypeParser)
+      mRhs <- optionalTokThen TkReservedRightArrow kindTypeParser
       case mRhs of
         Just rhs ->
           pure (TFun ArrowUnrestricted baseType rhs)
@@ -860,7 +957,7 @@ typedBindingOrSignatureParser ::
   TokParser a
 typedBindingOrSignatureParser typeParser signatureCtor bindingCtor singleBinderMsg = do
   (names, ty) <- typedSignaturePrefixParser typeParser
-  nextKind <- lexTokenKind <$> lookAhead anySingle
+  nextKind <- lexTokenKind <$> peekToken
   if nextKind == TkReservedEquals || nextKind == TkReservedPipe
     then case names of
       [name] -> bindingCtor name ty
@@ -1016,11 +1113,11 @@ recordFieldsWithWildcardsParser fieldsParser = do
   fields <- fieldsParser
   if rwcEnabled
     then do
-      mDotDot <- MP.optional (expectedTok TkReservedDotDot)
-      case mDotDot of
-        Nothing -> pure (fields, False)
-        Just _ -> do
-          _ <- MP.optional (expectedTok TkSpecialComma)
+      hasDotDot <- optionalTok TkReservedDotDot
+      if not hasDotDot
+        then pure (fields, False)
+        else do
+          _ <- optionalTok TkSpecialComma
           pure (fields, True)
     else pure (fields, False)
 
@@ -1244,6 +1341,21 @@ isConLikeNameType _ = False
 liftCheck :: Either Text a -> TokParser a
 liftCheck (Right a) = pure a
 liftCheck (Left msg) = fail (T.unpack msg)
+
+-- | Whether a token can start an infix operator, symbolic or backticked.
+-- Mirrors the token cases of 'infixOperatorParser'.
+startsInfixOperator :: LexTokenKind -> Bool
+startsInfixOperator kind =
+  case kind of
+    TkVarSym {} -> True
+    TkConSym {} -> True
+    TkPrefixPercent -> True
+    TkQVarSym {} -> True
+    TkQConSym {} -> True
+    TkMinusOperator -> True
+    TkReservedColon -> True
+    TkSpecialBacktick -> True
+    _ -> False
 
 -- | Parse an infix operator.
 infixOperatorParser :: TokParser Name

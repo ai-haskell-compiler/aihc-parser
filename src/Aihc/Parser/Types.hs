@@ -255,8 +255,8 @@ normalizeTokStreamParts rawTokens layoutState buffer pendingPragmas prevToken ex
           case rawTokens' of
             [] -> finish [] layoutState' [] pendingPragmas'
             rawTok : rawRest ->
-              let (allToks, laySt') = layoutTransition layoutState' rawTok
-               in go rawRest laySt' allToks pendingPragmas'
+              case layoutTransition layoutState' rawTok of
+                (allToks, laySt') -> go rawRest laySt' allToks pendingPragmas'
 
 -- | Step one token from the stream. This is the core primitive used by all
 -- Stream methods; its result is memoized in 'tokStreamNext'.

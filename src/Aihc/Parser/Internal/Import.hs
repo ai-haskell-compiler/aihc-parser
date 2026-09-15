@@ -98,9 +98,9 @@ membersParser =
 
     parseDotDotFirst = do
       expectedTok TkReservedDotDot
-      MP.optional (expectedTok TkSpecialComma) >>= \case
-        Nothing -> pure MembersAll
-        Just _ -> do
+      optionalTok TkSpecialComma >>= \case
+        False -> pure MembersAll
+        True -> do
           trailingMembers <- memberNameParser `MP.sepBy` expectedTok TkSpecialComma
           pure (MembersListAll 0 trailingMembers)
 
@@ -109,18 +109,18 @@ membersParser =
       parseMemberSegments [firstMember]
 
     parseMemberSegments members =
-      MP.optional (expectedTok TkSpecialComma) >>= \case
-        Nothing -> pure (MembersList members)
-        Just _ ->
+      optionalTok TkSpecialComma >>= \case
+        False -> pure (MembersList members)
+        True ->
           (expectedTok TkReservedDotDot >> parseWildcardTail members)
             <|> do
               nextMember <- memberNameParser
               parseMemberSegments (members <> [nextMember])
 
     parseWildcardTail members =
-      MP.optional (expectedTok TkSpecialComma) >>= \case
-        Nothing -> pure (MembersListAll (length members) members)
-        Just _ -> do
+      optionalTok TkSpecialComma >>= \case
+        False -> pure (MembersListAll (length members) members)
+        True -> do
           trailingMembers <- memberNameParser `MP.sepBy` expectedTok TkSpecialComma
           pure (MembersListAll (length members) (members <> trailingMembers))
 
@@ -163,7 +163,7 @@ importDeclParser = withSpan $ do
           unexpectedExpecting = "import declaration without duplicate 'qualified'",
           unexpectedContext = []
         }
-  importAlias <- MP.optional (expectedTok TkVarAs *> moduleNameParser)
+  importAlias <- optionalTokThen TkVarAs moduleNameParser
   importSpec <- MP.optional importSpecParser
   let isQualified = preQualified || isJust postQualified
   pure $ \span' ->

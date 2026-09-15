@@ -17,6 +17,7 @@ import Aihc.Parser.Internal.Common
     eofTok,
     expectedTok,
     lazy,
+    optionalTok,
     skipSemicolons,
   )
 import Aihc.Parser.Internal.Decl (declParser)
@@ -100,4 +101,4 @@ skipUntilDeclBoundary = do
           let kind = lexTokenKind tok
            in kind /= TkSpecialSemicolon && kind /= TkSpecialRBrace
       )
-  void (MP.optional (expectedTok TkSpecialSemicolon))
+  void (optionalTok TkSpecialSemicolon)

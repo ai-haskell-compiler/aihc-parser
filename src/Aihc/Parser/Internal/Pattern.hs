@@ -126,7 +126,7 @@ asApatParser =
 
 nonAsApatParser :: TokParser Pattern
 nonAsApatParser = do
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkTypeApp -> do
       typeAbstractionsEnabled <- isExtensionEnabled TypeAbstractions
@@ -267,7 +267,7 @@ stringLiteralFromToken tok =
 thSplicePatternParser :: TokParser Pattern
 thSplicePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
   expectedTok TkTHSplice
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     TkKeywordType -> MP.empty
     _ -> PSplice <$> atomExprParser
@@ -291,7 +291,7 @@ visibleTypeBinderCoreParser =
 varOrConPatternParser :: TokParser Pattern
 varOrConPatternParser = do
   (tok, name) <- identifierNameWithTokenParser
-  mNextTok <- MP.optional (lookAhead anySingle)
+  mNextTok <- peekTokenMaybe
   let ann = mkAnnotation (lexTokenSpan tok)
   case mNextTok of
     Just nextTok
@@ -311,12 +311,12 @@ varOrConPatternParser = do
 recordFieldPatternParser :: TokParser (RecordField Pattern)
 recordFieldPatternParser = do
   field <- recordFieldNameParser
-  mEq <- MP.optional (expectedTok TkReservedEquals)
-  case mEq of
-    Just () -> do
+  hasEquals <- optionalTok TkReservedEquals
+  if hasEquals
+    then do
       pat <- subpatternWithBareViewParser
       pure (RecordField field pat False)
-    Nothing -> do
+    else
       -- NamedFieldPuns: just "field" means "field = field"
       pure (RecordField field (PVar (nameToUnqualified field)) True)
 
@@ -352,7 +352,7 @@ subpatternWithBareViewParser :: TokParser Pattern
 subpatternWithBareViewParser = do
   mResult <- MP.optional . MP.try $ do
     expr <- exprParser
-    tok <- lookAhead anySingle
+    tok <- peekToken
     case lexTokenKind tok of
       TkReservedRightArrow -> pure (Left expr)
       TkSpecialComma -> Right <$> liftCheck (checkPattern expr)
@@ -372,7 +372,7 @@ subpatternWithBareViewParser = do
 parenOrTuplePatternParser :: TokParser Pattern
 parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
   (tupleFlavor, closeTok) <- tupleDelimsParser
-  mNextTok <- MP.optional (lookAhead anySingle)
+  mNextTok <- peekTokenMaybe
   case fmap lexTokenKind mNextTok of
     Just nextKind
       | nextKind == closeTok -> unitPatternParser tupleFlavor closeTok
@@ -459,7 +459,7 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
     -- the surrounding parens serve as prefix notation rather than grouping.
     parenPatElementParser :: TokParser (Bool, Pattern)
     parenPatElementParser = do
-      tok <- lookAhead anySingle
+      tok <- peekToken
       case lexTokenKind tok of
         TkPrefixBang -> (False,) <$> patternParser
         TkPrefixTilde -> (False,) <$> patternParser
@@ -484,7 +484,7 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
           -- Look ahead to check what comes after the operator
           mNext <- MP.optional . lookAhead . MP.try $ do
             _ <- anySingle -- skip the operator token itself
-            lookAhead anySingle
+            peekToken
           case fmap lexTokenKind mNext of
             -- If followed by closing delimiters, parse as operator pattern
             Just TkSpecialRParen -> (True,) <$> operatorPatternParser
@@ -515,28 +515,28 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
 
     tupleOrParenPatternParser tupleFlavor closeTok = do
       (isBareOp, first) <- parenPatElementParser
-      mComma <- MP.optional (expectedTok TkSpecialComma)
-      case mComma of
-        Nothing -> do
+      hasComma <- optionalTok TkSpecialComma
+      if hasComma
+        then do
+          (_, second) <- parenPatElementParser
+          more <- MP.many (expectedTok TkSpecialComma *> (snd <$> parenPatElementParser))
+          expectedTok closeTok
+          pure (PTuple tupleFlavor (first : second : more))
+        else do
           -- Check for pipe (unboxed sum: pattern in first slot)
-          mPipe <- if tupleFlavor == Unboxed then MP.optional (expectedTok TkReservedPipe) else pure Nothing
-          case mPipe of
-            Just () -> do
+          hasPipe <- if tupleFlavor == Unboxed then optionalTok TkReservedPipe else pure False
+          if hasPipe
+            then do
               -- (# pat | ... #) - pattern in first slot of sum
               trailingBars <- MP.many (expectedTok TkReservedPipe)
               expectedTok closeTok
               let arity = 2 + length trailingBars
               pure (PUnboxedSum 0 arity first)
-            Nothing -> do
+            else do
               expectedTok closeTok
               if tupleFlavor == Boxed
                 then parenOrSymConParser isBareOp first
                 else pure (PTuple Unboxed [first])
-        Just () -> do
-          (_, second) <- parenPatElementParser
-          more <- MP.many (expectedTok TkSpecialComma *> (snd <$> parenPatElementParser))
-          expectedTok closeTok
-          pure (PTuple tupleFlavor (first : second : more))
 
     parseUnboxedSumPatLeadingBars closeTok = do
       -- Parse (# | | ... | pat | ... | #) where pattern is not in first slot
