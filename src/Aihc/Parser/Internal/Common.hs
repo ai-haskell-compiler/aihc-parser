@@ -499,7 +499,7 @@ consumedSpan startState endState =
       pos <- MP.pstateSourcePos . MP.statePosState <$> MP.getParserState
       pure
         SourceSpan
-          { sourceSpanSourceName = MP.sourceName pos,
+          { sourceSpanSourceName = T.pack (MP.sourceName pos),
             sourceSpanStartLine = MP.unPos (MP.sourceLine pos),
             sourceSpanStartCol = MP.unPos (MP.sourceColumn pos),
             sourceSpanEndLine = MP.unPos (MP.sourceLine pos),

@@ -13,6 +13,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   consumed, or the zero-width span where the parser stands when it consumed
   none. Parse errors carry a `Maybe SourceSpan`, so `parseModule`,
   `ParseErr`, and `formatParseErrors` use `[(Maybe SourceSpan, Text)]`.
+- `sourceSpanSourceName` is now a `Text` rather than a `FilePath`. Callers
+  that read the field get a `Text`; callers that build a `SourceSpan` by hand
+  pass a `Text`. The name given as `parserSourceName` is still a `FilePath`
+  and is converted once when lexing starts.
+
+### Performance
+
+- `SourceSpan` is a flat record: the source name is a `Text` shared by every
+  span from the same file, and the six positions are unboxed `Int` fields.
+  Forcing a span with `rnf` is now constant time instead of walking the
+  source name character by character, which a consumer that `deepseq`s a
+  parse tree paid once per span.
 
 ## [3.0.1.1] - 2026-09-15
 

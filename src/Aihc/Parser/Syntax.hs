@@ -676,16 +676,27 @@ effectiveExtensions edition = List.foldl' applyOne (languageEditionExtensions ed
 -- A span is always concrete. Syntax without a location carries no
 -- 'SourceSpan' annotation at all, so consumers read a span with
 -- 'fromAnnotation' and treat its absence as the missing case.
+--
+-- A span is a flat record: the source name is a 'Text' that every span from
+-- the same file shares, and the positions are unboxed, so a span in weak head
+-- normal form is already in normal form and 'rnf' on it is constant time.
 data SourceSpan = SourceSpan
-  { sourceSpanSourceName :: !FilePath,
-    sourceSpanStartLine :: !Int,
-    sourceSpanStartCol :: !Int,
-    sourceSpanEndLine :: !Int,
-    sourceSpanEndCol :: !Int,
-    sourceSpanStartOffset :: !Int,
-    sourceSpanEndOffset :: !Int
+  { -- | The file the span refers to, as given to the parser or by a
+    -- @LINE@ pragma or @#line@ directive.
+    sourceSpanSourceName :: !Text,
+    sourceSpanStartLine :: {-# UNPACK #-} !Int,
+    sourceSpanStartCol :: {-# UNPACK #-} !Int,
+    sourceSpanEndLine :: {-# UNPACK #-} !Int,
+    sourceSpanEndCol :: {-# UNPACK #-} !Int,
+    sourceSpanStartOffset :: {-# UNPACK #-} !Int,
+    sourceSpanEndOffset :: {-# UNPACK #-} !Int
   }
-  deriving (Data, Eq, Ord, Generic, NFData)
+  deriving (Data, Eq, Ord, Generic)
+
+-- | Every field is strict and none of them holds a thunk once the span is in
+-- weak head normal form, so forcing the span is all there is to do.
+instance NFData SourceSpan where
+  rnf span' = span' `seq` ()
 
 instance Show SourceSpan where
   show SourceSpan {sourceSpanStartLine, sourceSpanStartCol, sourceSpanEndLine, sourceSpanEndCol} =
