@@ -124,14 +124,14 @@ forallTelescopeParser = do
 -- | Parse a single forall binder: {k} | (k :: *) | k
 forallBinderParser :: TokParser TyVarBinder
 forallBinderParser =
-  withSpanAnns $
+  withSpan $
     -- Inferred binder: {k} | {k :: Type}
     ( do
         expectedTok TkSpecialLBrace
         ident <- tyVarNameParser
         mKind <- MP.optional (expectedTok TkReservedDoubleColon *> typeParser)
         expectedTok TkSpecialRBrace
-        pure (\anns -> TyVarBinder anns ident mKind TyVarBInferred TyVarBVisible)
+        pure (\span' -> TyVarBinder [mkAnnotation span'] ident mKind TyVarBInferred TyVarBVisible)
     )
       <|> ( do
               expectedTok TkSpecialLParen
@@ -139,11 +139,11 @@ forallBinderParser =
               expectedTok TkReservedDoubleColon
               kind <- typeParser
               expectedTok TkSpecialRParen
-              pure (\anns -> TyVarBinder anns ident (Just kind) TyVarBSpecified TyVarBVisible)
+              pure (\span' -> TyVarBinder [mkAnnotation span'] ident (Just kind) TyVarBSpecified TyVarBVisible)
           )
       <|> ( do
               ident <- tyVarNameParser
-              pure (\anns -> TyVarBinder anns ident Nothing TyVarBSpecified TyVarBVisible)
+              pure (\span' -> TyVarBinder [mkAnnotation span'] ident Nothing TyVarBSpecified TyVarBVisible)
           )
 
 contextTypeParser :: TokParser Type

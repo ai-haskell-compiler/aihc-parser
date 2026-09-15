@@ -116,10 +116,10 @@ cmdCaseParser = withSpanAnn (CmdAnn . mkAnnotation) $ do
   pure (CmdCase scrut alts)
 
 cmdCaseAltParser :: TokParser (CaseAlt Cmd)
-cmdCaseAltParser = withSpanAnns $ do
+cmdCaseAltParser = withSpan $ do
   pat <- caseAltPatternParser
   rhs <- caseRhsParserWithBodyParser cmdParser
-  pure (\anns -> CaseAlt anns pat rhs)
+  pure (\span' -> CaseAlt [mkAnnotation span'] pat rhs)
 
 -- | Parse a command let: @let decls in cmd@
 cmdLetParser :: TokParser Cmd

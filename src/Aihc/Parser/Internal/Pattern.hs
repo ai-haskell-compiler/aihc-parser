@@ -274,10 +274,10 @@ thSplicePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
 
 visibleTypeBinderCoreParser :: TokParser TyVarBinder
 visibleTypeBinderCoreParser =
-  withSpanAnns $
+  withSpan $
     ( do
         ident <- tyVarNameParser
-        pure (\anns -> TyVarBinder anns ident Nothing TyVarBSpecified TyVarBInvisible)
+        pure (\span' -> TyVarBinder [mkAnnotation span'] ident Nothing TyVarBSpecified TyVarBInvisible)
     )
       <|> ( do
               expectedTok TkSpecialLParen
@@ -285,7 +285,7 @@ visibleTypeBinderCoreParser =
               expectedTok TkReservedDoubleColon
               kind <- typeParser
               expectedTok TkSpecialRParen
-              pure (\anns -> TyVarBinder anns ident (Just kind) TyVarBSpecified TyVarBInvisible)
+              pure (\span' -> TyVarBinder [mkAnnotation span'] ident (Just kind) TyVarBSpecified TyVarBInvisible)
           )
 
 varOrConPatternParser :: TokParser Pattern

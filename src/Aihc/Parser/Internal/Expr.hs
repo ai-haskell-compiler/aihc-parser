@@ -158,14 +158,14 @@ multiWayIfExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
   EMultiWayIf <$> braces (MP.some multiWayIfAlternative)
 
 multiWayIfAlternative :: TokParser (GuardedRhs Expr)
-multiWayIfAlternative = withSpanAnns $ do
+multiWayIfAlternative = withSpan $ do
   expectedTok TkReservedPipe
   guards <- layoutSepBy1 (guardQualifierParser RhsArrowCase) (expectedTok TkSpecialComma)
   expectedTok TkReservedRightArrow
   body <- exprParser
-  pure $ \anns ->
+  pure $ \span' ->
     GuardedRhs
-      { guardedRhsAnns = anns,
+      { guardedRhsAnns = [mkAnnotation span'],
         guardedRhsGuards = guards,
         guardedRhsBody = body
       }
@@ -381,15 +381,15 @@ appExprParser = appExprParserWith atomOrRecordExprParser
 -- variants.  The caller chooses the @aexp@-like atom parser.
 appExprParserWith :: TokParser Expr -> TokParser Expr
 appExprParserWith atomParser = do
-  startInput <- MP.getInput
+  startState <- MP.getParserState
   first <- atomParser
   rest <- MP.many appArg
   case rest of
     [] -> pure first
     _ -> do
-      endInput <- MP.getInput
-      let app = foldl applyArg first rest
-      pure (maybe app (\sp -> EAnn (mkAnnotation sp) app) (consumedSpan startInput endInput))
+      endState <- MP.getParserState
+      appSpan <- consumedSpan startState endState
+      pure (EAnn (mkAnnotation appSpan) (foldl applyArg first rest))
   where
     appArg :: TokParser (Either Type Expr)
     appArg = (Left <$> typeAppArg) <|> (Right <$> appExprArgParser)
@@ -463,11 +463,11 @@ atomOrRecordExprParserWith atomContext =
               fieldName <- recordFieldNameParser
               applyRecordSuffixes (EGetField e fieldName)
 
-    normalizeField :: (Name, Maybe Expr, [Annotation]) -> RecordField Expr
-    normalizeField (fieldName, mExpr, anns) =
+    normalizeField :: (Name, Maybe Expr, SourceSpan) -> RecordField Expr
+    normalizeField (fieldName, mExpr, sp) =
       case mExpr of
         Just expr' -> RecordField fieldName expr' False
-        Nothing -> RecordField fieldName (foldr EAnn (EVar fieldName) anns) True
+        Nothing -> RecordField fieldName (EAnn (mkAnnotation sp) (EVar fieldName)) True
 
     recordDotMayFollow :: Expr -> Bool
     recordDotMayFollow expr =
@@ -479,13 +479,13 @@ atomOrRecordExprParserWith atomContext =
         _ -> True
 
 -- | Parse record braces: { field = value, field2 = value2, ... }
-recordBracesParser :: TokParser ([(Name, Maybe Expr, [Annotation])], Bool)
+recordBracesParser :: TokParser ([(Name, Maybe Expr, SourceSpan)], Bool)
 recordBracesParser =
   braces $
     recordFieldsWithWildcardsParser (layoutSepEndBy recordFieldBindingParser (expectedTok TkSpecialComma))
 
-recordFieldBindingParser :: TokParser (Name, Maybe Expr, [Annotation])
-recordFieldBindingParser = withSpanAnns $ do
+recordFieldBindingParser :: TokParser (Name, Maybe Expr, SourceSpan)
+recordFieldBindingParser = withSpan $ do
   fieldName <- recordFieldNameParser
   mAssign <- MP.optional (expectedTok TkReservedEquals *> exprParser)
   pure (fieldName,mAssign,)
@@ -695,31 +695,31 @@ rhsParserWithBodyParser arrowKind bodyParser = do
           }
 
 unguardedRhsParserWithBodyParser :: RhsArrowKind -> TokParser body -> TokParser (Rhs body)
-unguardedRhsParserWithBodyParser arrowKind bodyParser = withSpanAnns $ do
+unguardedRhsParserWithBodyParser arrowKind bodyParser = withSpan $ do
   rhsArrowTok arrowKind
   body <- region (rhsContextText arrowKind) bodyParser
   whereDecls <- MP.optional whereClauseParser
-  pure (\anns -> UnguardedRhs anns body whereDecls)
+  pure (\span' -> UnguardedRhs [mkAnnotation span'] body whereDecls)
 
 rhsContextText :: RhsArrowKind -> Text
 rhsContextText RhsArrowCase = "while parsing case alternative right-hand side"
 rhsContextText RhsArrowEquation = "while parsing equation right-hand side"
 
 guardedRhssParserWithBodyParser :: RhsArrowKind -> TokParser body -> TokParser (Rhs body)
-guardedRhssParserWithBodyParser arrowKind bodyParser = withSpanAnns $ do
+guardedRhssParserWithBodyParser arrowKind bodyParser = withSpan $ do
   grhss <- MP.some (guardedRhsParserWithBodyParser arrowKind bodyParser)
   whereDecls <- MP.optional whereClauseParser
-  pure (\anns -> GuardedRhss anns grhss whereDecls)
+  pure (\span' -> GuardedRhss [mkAnnotation span'] grhss whereDecls)
 
 guardedRhsParserWithBodyParser :: RhsArrowKind -> TokParser body -> TokParser (GuardedRhs body)
-guardedRhsParserWithBodyParser arrowKind bodyParser = withSpanAnns $ do
+guardedRhsParserWithBodyParser arrowKind bodyParser = withSpan $ do
   expectedTok TkReservedPipe
   guards <- layoutSepBy1 (guardQualifierParser arrowKind) (expectedTok TkSpecialComma)
   rhsArrowTok arrowKind
   body <- bodyParser
-  pure $ \anns ->
+  pure $ \span' ->
     GuardedRhs
-      { guardedRhsAnns = anns,
+      { guardedRhsAnns = [mkAnnotation span'],
         guardedRhsGuards = guards,
         guardedRhsBody = body
       }
@@ -760,23 +760,23 @@ guardExprParser RhsArrowEquation = exprParserWithTypeSigParser typeParser
 guardExprParser RhsArrowCase = exprCoreParserWithoutTypeSig
 
 caseAltParser :: TokParser (CaseAlt Expr)
-caseAltParser = withSpanAnns $ do
+caseAltParser = withSpan $ do
   pat <- region "while parsing case alternative" caseAltPatternParser
   rhs <- region "while parsing case alternative" rhsParser
-  pure $ \anns ->
+  pure $ \span' ->
     CaseAlt
-      { caseAltAnns = anns,
+      { caseAltAnns = [mkAnnotation span'],
         caseAltPattern = pat,
         caseAltRhs = rhs
       }
 
 lambdaCaseAltParser :: TokParser LambdaCaseAlt
-lambdaCaseAltParser = withSpanAnns $ do
+lambdaCaseAltParser = withSpan $ do
   pats <- region "while parsing lambda-cases alternative" (MP.many apatParser)
   rhs <- region "while parsing lambda-cases alternative" rhsParser
-  pure $ \anns ->
+  pure $ \span' ->
     LambdaCaseAlt
-      { lambdaCaseAltAnns = anns,
+      { lambdaCaseAltAnns = [mkAnnotation span'],
         lambdaCaseAltPats = pats,
         lambdaCaseAltRhs = rhs
       }
@@ -1133,23 +1133,23 @@ compTransformLambdaExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
       pure (ELambdaPats pats body)
 
 compTransformCaseAltParser :: TokParser (CaseAlt Expr)
-compTransformCaseAltParser = withSpanAnns $ do
+compTransformCaseAltParser = withSpan $ do
   pat <- region "while parsing case alternative" caseAltPatternParser
   rhs <- region "while parsing case alternative" (caseRhsParserWithBodyParser compTransformExprParser)
-  pure $ \anns ->
+  pure $ \span' ->
     CaseAlt
-      { caseAltAnns = anns,
+      { caseAltAnns = [mkAnnotation span'],
         caseAltPattern = pat,
         caseAltRhs = rhs
       }
 
 compTransformLambdaCaseAltParser :: TokParser LambdaCaseAlt
-compTransformLambdaCaseAltParser = withSpanAnns $ do
+compTransformLambdaCaseAltParser = withSpan $ do
   pats <- region "while parsing lambda-cases alternative" (MP.many apatParser)
   rhs <- region "while parsing lambda-cases alternative" (caseRhsParserWithBodyParser compTransformExprParser)
-  pure $ \anns ->
+  pure $ \span' ->
     LambdaCaseAlt
-      { lambdaCaseAltAnns = anns,
+      { lambdaCaseAltAnns = [mkAnnotation span'],
         lambdaCaseAltPats = pats,
         lambdaCaseAltRhs = rhs
       }

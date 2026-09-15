@@ -35,7 +35,7 @@ data RecoverParseStep a
 -- the whole-module span suspended until the corresponding result is demanded.
 moduleParser :: TokParser Module
 moduleParser = do
-  startInput <- MP.getInput
+  startState <- MP.getParserState
   languagePragmas <- MP.many (languagePragmaParser <* MP.many (expectedTok TkSpecialSemicolon))
   mHeader <- MP.optional (moduleHeaderParser <* MP.many (expectedTok TkSpecialSemicolon))
   expectedTok TkSpecialLBrace
@@ -48,9 +48,10 @@ moduleParser = do
           <* MP.lookAhead eofTok
       )
   MP.updateParserState (\state -> state {MP.stateParseErrors = MP.stateParseErrors finalState})
+  moduleSpan <- consumedSpan startState finalState
   pure
     Module
-      { moduleAnns = maybe [] (pure . mkAnnotation) (consumedSpan startInput (MP.stateInput finalState)),
+      { moduleAnns = [mkAnnotation moduleSpan],
         moduleHead = mHeader,
         moduleLanguagePragmas = concat languagePragmas,
         moduleImports = imports,

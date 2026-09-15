@@ -277,10 +277,10 @@ typeFamilyResultSigParser explicitFamily =
           | otherwise -> fail "named result sig without injectivity requires explicit 'family' keyword"
 
     namedResultBinderParser =
-      withSpanAnns $
+      withSpan $
         ( do
             ident <- lowerIdentifierParser
-            pure (\anns -> TyVarBinder anns ident Nothing TyVarBSpecified TyVarBVisible)
+            pure (\span' -> TyVarBinder [mkAnnotation span'] ident Nothing TyVarBSpecified TyVarBVisible)
         )
           <|> ( do
                   expectedTok TkSpecialLParen
@@ -288,18 +288,18 @@ typeFamilyResultSigParser explicitFamily =
                   expectedTok TkReservedDoubleColon
                   kind <- typeParser
                   expectedTok TkSpecialRParen
-                  pure (\anns -> TyVarBinder anns ident (Just kind) TyVarBSpecified TyVarBVisible)
+                  pure (\span' -> TyVarBinder [mkAnnotation span'] ident (Just kind) TyVarBSpecified TyVarBVisible)
               )
 
 typeFamilyInjectivityParser :: TokParser TypeFamilyInjectivity
-typeFamilyInjectivityParser = withSpanAnns $ do
+typeFamilyInjectivityParser = withSpan $ do
   expectedTok TkReservedPipe
   result <- lowerIdentifierParser
   expectedTok TkReservedRightArrow
   determined <- MP.some lowerIdentifierParser
-  pure $ \anns ->
+  pure $ \span' ->
     TypeFamilyInjectivity
-      { typeFamilyInjectivityAnns = anns,
+      { typeFamilyInjectivityAnns = [mkAnnotation span'],
         typeFamilyInjectivityResult = result,
         typeFamilyInjectivityDetermined = determined
       }
@@ -319,14 +319,14 @@ closedTypeFamilyWhereParser = whereClauseItemsParser typeFamilyEqParser
 
 -- | Parse one closed type family equation: @[forall binders.] LhsType = RhsType@
 typeFamilyEqParser :: TokParser TypeFamilyEq
-typeFamilyEqParser = withSpanAnns $ do
+typeFamilyEqParser = withSpan $ do
   forallBinders <- MP.option [] explicitForallParser
   (headForm, lhs) <- typeFamilyLhsParser
   expectedTok TkReservedEquals
   rhs <- typeParser
-  pure $ \anns ->
+  pure $ \span' ->
     TypeFamilyEq
-      { typeFamilyEqAnns = anns,
+      { typeFamilyEqAnns = [mkAnnotation span'],
         typeFamilyEqForall = forallBinders,
         typeFamilyEqHeadForm = headForm,
         typeFamilyEqLhs = lhs,
@@ -647,13 +647,13 @@ classFundepsParser = do
   classFundepParser `MP.sepBy1` expectedTok TkSpecialComma
 
 classFundepParser :: TokParser FunctionalDependency
-classFundepParser = withSpanAnns $ do
+classFundepParser = withSpan $ do
   determinedBy <- MP.many lowerIdentifierParser
   expectedTok TkReservedRightArrow
   determines <- MP.many lowerIdentifierParser
-  pure $ \anns ->
+  pure $ \span' ->
     FunctionalDependency
-      { functionalDependencyAnns = anns,
+      { functionalDependencyAnns = [mkAnnotation span'],
         functionalDependencyDeterminers = determinedBy,
         functionalDependencyDetermined = determines
       }
@@ -1254,7 +1254,7 @@ typeSynonymOperatorParser =
       pure op
 
 typeFamilyHeadParser :: TokParser (TypeHeadForm, Type, [TyVarBinder])
-typeFamilyHeadParser = withSpanAnns $ do
+typeFamilyHeadParser = withSpan $ do
   binderHead <- declHeadParserWith (nameToUnqualified <$> typeFamilyOperatorParser)
   pure (`binderHeadToTypeFamilyHead` binderHead)
 
@@ -1293,17 +1293,17 @@ typeFamilyLhsParser = do
 classHeadParser :: TokParser (BinderHead UnqualifiedName)
 classHeadParser = declHeadParserWith (nameToUnqualified <$> typeFamilyOperatorParser)
 
-binderHeadToTypeFamilyHead :: [Annotation] -> BinderHead UnqualifiedName -> (TypeHeadForm, Type, [TyVarBinder])
-binderHeadToTypeFamilyHead anns binderHead =
+binderHeadToTypeFamilyHead :: SourceSpan -> BinderHead UnqualifiedName -> (TypeHeadForm, Type, [TyVarBinder])
+binderHeadToTypeFamilyHead span' binderHead =
   case binderHead of
     PrefixBinderHead name params ->
       ( TypeHeadPrefix,
-        foldr TAnn (TCon (qualifyName Nothing name) Unpromoted) anns,
+        typeAnnSpan span' (TCon (qualifyName Nothing name) Unpromoted),
         params
       )
     InfixBinderHead lhs op rhs tailParams ->
       ( TypeHeadInfix,
-        foldr TAnn (TInfix lhsType opName Unpromoted rhsType) anns,
+        typeAnnSpan span' (TInfix lhsType opName Unpromoted rhsType),
         [lhs, rhs] <> tailParams
       )
       where
@@ -1313,10 +1313,10 @@ binderHeadToTypeFamilyHead anns binderHead =
 
 explicitForallBinderParser :: TokParser TyVarBinder
 explicitForallBinderParser =
-  withSpanAnns $
+  withSpan $
     ( do
         ident <- typeParamBinderNameParser
-        pure (\anns -> TyVarBinder anns ident Nothing TyVarBSpecified TyVarBVisible)
+        pure (\span' -> TyVarBinder [mkAnnotation span'] ident Nothing TyVarBSpecified TyVarBVisible)
     )
       <|> ( do
               expectedTok TkSpecialLParen
@@ -1324,18 +1324,18 @@ explicitForallBinderParser =
               expectedTok TkReservedDoubleColon
               kind <- typeParser
               expectedTok TkSpecialRParen
-              pure (\anns -> TyVarBinder anns ident (Just kind) TyVarBSpecified TyVarBVisible)
+              pure (\span' -> TyVarBinder [mkAnnotation span'] ident (Just kind) TyVarBSpecified TyVarBVisible)
           )
 
 declTypeParamParser :: TokParser TyVarBinder
 declTypeParamParser = MP.try invisibleDeclTypeParamParser <|> explicitForallBinderParser
 
 invisibleDeclTypeParamParser :: TokParser TyVarBinder
-invisibleDeclTypeParamParser = withSpanAnns $ do
+invisibleDeclTypeParamParser = withSpan $ do
   expectedTok TkTypeApp
   ( do
       ident <- lowerIdentifierParser <|> (expectedTok TkKeywordUnderscore $> "_")
-      pure (\anns -> TyVarBinder anns ident Nothing TyVarBSpecified TyVarBInvisible)
+      pure (\span' -> TyVarBinder [mkAnnotation span'] ident Nothing TyVarBSpecified TyVarBInvisible)
     )
     <|> do
       expectedTok TkSpecialLParen
@@ -1343,7 +1343,7 @@ invisibleDeclTypeParamParser = withSpanAnns $ do
       expectedTok TkReservedDoubleColon
       kind <- typeParser
       expectedTok TkSpecialRParen
-      pure (\anns -> TyVarBinder anns ident (Just kind) TyVarBSpecified TyVarBInvisible)
+      pure (\span' -> TyVarBinder [mkAnnotation span'] ident (Just kind) TyVarBSpecified TyVarBInvisible)
 
 isTypeVarName :: Text -> Bool
 isTypeVarName name =
@@ -1464,15 +1464,15 @@ recordFieldsParser :: TokParser [FieldDecl]
 recordFieldsParser = braces (recordFieldDeclParser `MP.sepEndBy` expectedTok TkSpecialComma)
 
 recordFieldDeclParser :: TokParser FieldDecl
-recordFieldDeclParser = withSpanAnns $ do
+recordFieldDeclParser = withSpan $ do
   names <- binderNameParser `MP.sepBy1` expectedTok TkSpecialComma
   linearEnabled <- isExtensionEnabled LinearTypes
   mMult <- if linearEnabled then MP.optional fieldMultiplicityParser else pure Nothing
   expectedTok TkReservedDoubleColon
   fieldTy <- recordFieldBangTypeParser
-  pure $ \anns ->
+  pure $ \span' ->
     FieldDecl
-      { fieldAnns = anns,
+      { fieldAnns = [mkAnnotation span'],
         fieldNames = names,
         fieldMultiplicity = mMult,
         fieldType = fieldTy
@@ -1497,14 +1497,14 @@ derivingKeywordParser =
       _ -> Nothing
 
 bangTypeParserWith :: TokParser Type -> TokParser BangType
-bangTypeParserWith typeP = withSpanAnns $ do
+bangTypeParserWith typeP = withSpan $ do
   pragmas <- MP.option [] (fmap (: []) unpackPragmaParser)
   strict <- MP.option False (expectedTok TkPrefixBang >> pure True)
   isLazy <- MP.option False (expectedTok TkPrefixTilde >> pure True)
   ty <- typeP
-  pure $ \anns ->
+  pure $ \span' ->
     BangType
-      { bangAnns = anns,
+      { bangAnns = [mkAnnotation span'],
         bangPragmas = pragmas,
         bangStrict = strict,
         bangLazy = isLazy,
@@ -1662,12 +1662,12 @@ patSynWhereClauseParser _name = whereClauseItemsParser patSynWhereMatch
 -- that serves as the function head — both 'patParser' and the infix
 -- head parser compete for the same constructor operators.
 patSynWhereMatch :: TokParser Match
-patSynWhereMatch = withSpanAnns $ do
+patSynWhereMatch = withSpan $ do
   (headForm, _name, pats) <- patSynWhereHeadParser
   rhs <- equationRhsParser
-  pure $ \anns ->
+  pure $ \span' ->
     Match
-      { matchAnns = anns,
+      { matchAnns = [mkAnnotation span'],
         matchHeadForm = headForm,
         matchPats = pats,
         matchRhs = rhs

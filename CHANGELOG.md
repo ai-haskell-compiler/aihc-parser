@@ -9,10 +9,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Remove the `NoSourceSpan` constructor and `noSourceSpan`. A `SourceSpan` is
-  now always a concrete span, and syntax without a location carries no
-  `SourceSpan` annotation instead of a placeholder one. Parse errors carry a
-  `Maybe SourceSpan`, so `parseModule`, `ParseErr`, and `formatParseErrors`
-  use `[(Maybe SourceSpan, Text)]`.
+  now always a concrete span. Parsed syntax gets the span of the tokens it
+  consumed, or the zero-width span where the parser stands when it consumed
+  none. Parse errors carry a `Maybe SourceSpan`, so `parseModule`,
+  `ParseErr`, and `formatParseErrors` use `[(Maybe SourceSpan, Text)]`.
 
 ## [3.0.1.1] - 2026-09-15
 

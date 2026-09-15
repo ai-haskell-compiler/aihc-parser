@@ -34,7 +34,7 @@ module Aihc.Parser.Internal.Common
     stringTextParser,
     consumedSpan,
     inputStartSpan,
-    withSpanAnns,
+    withSpan,
     withSpanAnn,
     optionalSuffix,
     parens,
@@ -464,40 +464,68 @@ stringTextParser =
       TkString txt -> Just txt
       _ -> Nothing
 
--- | The span of the tokens between two stream positions: from the first token
--- at the start position to the last token consumed before the end position.
--- 'Nothing' when neither end has a token, which only happens on an empty
--- token stream.
-consumedSpan :: TokStream -> TokStream -> Maybe SourceSpan
-consumedSpan startInput endInput =
-  case (inputStartSpan startInput, lexTokenSpan <$> tokStreamPrevToken endInput) of
-    (Just startSpan, Just endSpan) -> Just (mergeSourceSpans startSpan endSpan)
-    (Just startSpan, Nothing) -> Just startSpan
-    (Nothing, endSpan) -> endSpan
+-- | The span of the tokens consumed between two parser states: from the first
+-- token at the start state to the last token consumed before the end state.
+--
+-- A parser that consumed nothing gets the zero-width span at the point where
+-- it stands. A stream with no tokens at all has no such point; the lexer never
+-- builds one, since it always ends the stream with 'TkEOF', but a stream built
+-- from an explicit token list can be empty. The span then covers the whole
+-- input, which is empty.
+consumedSpan :: MP.State TokStream ParserErrorComponent -> MP.State TokStream ParserErrorComponent -> TokParser SourceSpan
+consumedSpan startState endState =
+  case (inputStartSpan (MP.stateInput startState), lexTokenSpan <$> tokStreamPrevToken (MP.stateInput endState)) of
+    (Just next, Just prev)
+      | MP.stateOffset endState > MP.stateOffset startState -> pure (mergeSourceSpans next prev)
+      | otherwise -> pure (emptySpanAtStart next)
+    (Just next, Nothing) -> pure (emptySpanAtStart next)
+    (Nothing, Just prev) -> pure (emptySpanAtEnd prev)
+    (Nothing, Nothing) -> wholeInputSpan
+  where
+    emptySpanAtStart sp =
+      sp
+        { sourceSpanEndLine = sourceSpanStartLine sp,
+          sourceSpanEndCol = sourceSpanStartCol sp,
+          sourceSpanEndOffset = sourceSpanStartOffset sp
+        }
+    emptySpanAtEnd sp =
+      sp
+        { sourceSpanStartLine = sourceSpanEndLine sp,
+          sourceSpanStartCol = sourceSpanEndCol sp,
+          sourceSpanStartOffset = sourceSpanEndOffset sp
+        }
+    wholeInputSpan = do
+      pos <- MP.pstateSourcePos . MP.statePosState <$> MP.getParserState
+      pure
+        SourceSpan
+          { sourceSpanSourceName = MP.sourceName pos,
+            sourceSpanStartLine = MP.unPos (MP.sourceLine pos),
+            sourceSpanStartCol = MP.unPos (MP.sourceColumn pos),
+            sourceSpanEndLine = MP.unPos (MP.sourceLine pos),
+            sourceSpanEndCol = MP.unPos (MP.sourceColumn pos),
+            sourceSpanStartOffset = 0,
+            sourceSpanEndOffset = 0
+          }
 {-# INLINE consumedSpan #-}
 
--- | Run a parser and annotate its result with the span of the consumed
--- tokens. The result stays unannotated when no span is available.
+-- | Run a parser and annotate its result with the span of the consumed tokens.
 withSpanAnn :: (SourceSpan -> a -> a) -> TokParser a -> TokParser a
 withSpanAnn f parser = do
-  startInput <- MP.getInput
+  startState <- MP.getParserState
   out <- parser
-  endInput <- MP.getInput
-  let annotate sp = f sp out
-  pure (maybe out annotate (consumedSpan startInput endInput))
+  endState <- MP.getParserState
+  parserSpan <- consumedSpan startState endState
+  pure (f parserSpan out)
 {-# INLINE withSpanAnn #-}
 
--- | Run a parser whose result takes its annotations as a list: the
--- 'SourceSpan' annotation for the consumed tokens, or no annotation when no
--- span is available.
-withSpanAnns :: TokParser ([Annotation] -> a) -> TokParser a
-withSpanAnns parser = do
-  startInput <- MP.getInput
+-- | Run a parser whose result takes the span of the consumed tokens.
+withSpan :: TokParser (SourceSpan -> a) -> TokParser a
+withSpan parser = do
+  startState <- MP.getParserState
   out <- parser
-  endInput <- MP.getInput
-  let anns = maybe [] (pure . mkAnnotation) (consumedSpan startInput endInput)
-  pure (out anns)
-{-# INLINE withSpanAnns #-}
+  endState <- MP.getParserState
+  out <$> consumedSpan startState endState
+{-# INLINE withSpan #-}
 
 -- | The span of the next token, if there is one.
 inputStartSpan :: TokStream -> Maybe SourceSpan

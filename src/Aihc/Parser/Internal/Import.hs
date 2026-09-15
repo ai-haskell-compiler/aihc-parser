@@ -29,15 +29,15 @@ languagePragmaParser =
     _ -> Nothing
 
 moduleHeaderParser :: TokParser ModuleHead
-moduleHeaderParser = withSpanAnns $ do
+moduleHeaderParser = withSpan $ do
   expectedTok TkKeywordModule
   name <- moduleNameParser
   mWarning <- MP.optional warningPragmaParser
   exports <- MP.optional exportSpecListParser
   expectedTok TkKeywordWhere
-  pure $ \anns ->
+  pure $ \span' ->
     ModuleHead
-      { moduleHeadAnns = anns,
+      { moduleHeadAnns = [mkAnnotation span'],
         moduleHeadName = name,
         moduleHeadWarningPragma = mWarning,
         moduleHeadExports = exports
@@ -140,7 +140,7 @@ isTypeName name =
     Nothing -> False
 
 importDeclParser :: TokParser ImportDecl
-importDeclParser = withSpanAnns $ do
+importDeclParser = withSpan $ do
   expectedTok TkKeywordImport
   importedSafe <-
     MP.option False (expectedTok TkVarSafe >> pure True)
@@ -166,9 +166,9 @@ importDeclParser = withSpanAnns $ do
   importAlias <- MP.optional (expectedTok TkVarAs *> moduleNameParser)
   importSpec <- MP.optional importSpecParser
   let isQualified = preQualified || isJust postQualified
-  pure $ \anns ->
+  pure $ \span' ->
     ImportDecl
-      { importDeclAnns = anns,
+      { importDeclAnns = [mkAnnotation span'],
         importDeclLevel = importedLevel,
         importDeclPackage = importedPackage,
         importDeclSourcePragma = importedSource,
@@ -189,13 +189,13 @@ packageNameParser :: TokParser Text
 packageNameParser = stringTextParser
 
 importSpecParser :: TokParser ImportSpec
-importSpecParser = withSpanAnns $ do
+importSpecParser = withSpan $ do
   isHiding <-
     MP.option False (expectedTok TkVarHiding >> pure True)
   items <- parens $ importItemParser `MP.sepEndBy` expectedTok TkSpecialComma
-  pure $ \anns ->
+  pure $ \span' ->
     ImportSpec
-      { importSpecAnns = anns,
+      { importSpecAnns = [mkAnnotation span'],
         importSpecHiding = isHiding,
         importSpecItems = items
       }
