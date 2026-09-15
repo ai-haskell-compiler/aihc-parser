@@ -123,8 +123,8 @@ scanTokens env st0 =
     SkipDone st
       | T.null (lexerInput st) -> [eofToken st]
       | otherwise ->
-          let (tok, st') = nextToken env st
-           in tok : scanTokens env (recordScannedToken tok st')
+          case nextToken env st of
+            (tok, st') -> tok : scanTokens env (recordScannedToken tok st')
 
 data SkipResult = SkipDone !LexerState | SkipToken !LexToken !LexerState
 
@@ -147,8 +147,8 @@ skipTrivia = go
             _
               | Just rest <- T.stripPrefix "--" inp,
                 isLineComment rest ->
-                  let (tok, st') = consumeLineCommentToken st
-                   in SkipToken tok (markHadTrivia st')
+                  case consumeLineCommentToken st of
+                    (tok, st') -> SkipToken tok (markHadTrivia st')
             -- Check {-# before {- so control pragmas are handled first and
             -- block comment handler does not eat pragma tokens.
             _
@@ -261,11 +261,11 @@ stepNextToken env lexSt laySt =
       case scanOneToken env lexSt of
         Nothing -> Nothing
         Just (rawTok, lexSt') ->
-          let (allToks, laySt') = layoutTransition laySt rawTok
-           in case allToks of
-                [] -> Just (rawTok, lexSt', laySt')
-                [first] -> Just (first, lexSt', laySt')
-                first : rest -> Just (first, lexSt', laySt' {layoutBuffer = rest})
+          case layoutTransition laySt rawTok of
+            (allToks, laySt') -> case allToks of
+              [] -> Just (rawTok, lexSt', laySt')
+              [first] -> Just (first, lexSt', laySt')
+              first : rest -> Just (first, lexSt', laySt' {layoutBuffer = rest})
 
 scanOneToken :: LexerEnv -> LexerState -> Maybe (LexToken, LexerState)
 scanOneToken env st0 =
@@ -281,8 +281,8 @@ scanOneToken env st0 =
                   st' = st {lexerPrevTokenKind = Just TkEOF, lexerHadTrivia = False}
                in Just (tok, st')
       | otherwise ->
-          let (tok, st') = nextToken env st
-           in Just (tok, recordScannedToken tok st')
+          case nextToken env st of
+            (tok, st') -> Just (tok, recordScannedToken tok st')
 
 scanAllTokens :: LexerEnv -> LexerState -> [LexToken]
 scanAllTokens env st =
@@ -299,23 +299,25 @@ lexIdentifier env st =
               !firstChunkLen = utf8CharWidth c + identTailBytes hasMagicHash rest
               firstChunk = TU.takeWord8 firstChunkLen (lexerInput st)
               rest0 = TU.dropWord8 firstChunkLen (lexerInput st)
-              (consumed, rest1, isQualified) = gatherQualified hasMagicHash False firstChunk rest0
-           in case (isQualified || isConIdStart c, rest1) of
-                (True, '.' :< dotRest@(opChar :< _))
-                  | isSymbolicOpChar opChar ->
-                      let opChars = T.takeWhile isSymbolicOpChar dotRest
-                          fullOp = consumed <> "." <> opChars
-                          (modName, opName) = splitQualified (consumed <> ".") opChars
-                          kind =
-                            if opChar == ':'
-                              then TkQConSym modName opName
-                              else TkQVarSym modName opName
-                          st' = advanceChars fullOp st
-                       in Just (mkToken st st' fullOp kind, st')
-                _ ->
-                  let kind = classifyIdentifier c isQualified consumed
-                      st' = advanceChars consumed st
-                   in Just (mkToken st st' consumed kind, st')
+           in case gatherQualified hasMagicHash False firstChunk rest0 of
+                (consumed, rest1, isQualified) ->
+                  case rest1 of
+                    '.' :< dotRest@(opChar :< _)
+                      | isQualified || isConIdStart c,
+                        isSymbolicOpChar opChar ->
+                          let opChars = T.takeWhile isSymbolicOpChar dotRest
+                              fullOp = consumed <> "." <> opChars
+                              modName = consumed
+                              kind =
+                                if opChar == ':'
+                                  then TkQConSym modName opChars
+                                  else TkQVarSym modName opChars
+                              !st' = advanceChars fullOp st
+                           in Just (mkToken st st' fullOp kind, st')
+                    _ ->
+                      let kind = classifyIdentifier c isQualified consumed
+                          !st' = advanceChars consumed st
+                       in Just (mkToken st st' consumed kind, st')
     _ -> Nothing
   where
     -- The Bool accumulator records whether a qualifier segment was added.
@@ -326,30 +328,26 @@ lexIdentifier env st =
           | isIdentStart c',
             not (T.isSuffixOf "#" acc),
             isConIdStart (T.head acc) ->
-              let (seg, rest) = consumeIdentTail hasMH more
-                  segWithHead = TU.takeWord8 (utf8CharWidth c' + TU.lengthWord8 seg) dotRest
-               in gatherQualified hasMH True (acc <> "." <> segWithHead) rest
+              case consumeIdentTail hasMH more of
+                (seg, rest) ->
+                  let segWithHead = TU.takeWord8 (utf8CharWidth c' + TU.lengthWord8 seg) dotRest
+                   in gatherQualified hasMH True (acc <> "." <> segWithHead) rest
         _ -> (acc, chars, qualified)
-
-    -- Split a qualified identifier into (module part, name part).
-    -- E.g. "Data.Maybe." ++ "++" -> ("Data.Maybe", "++")
-    splitQualified :: Text -> Text -> (Text, Text)
-    splitQualified modWithDot name =
-      (T.dropEnd 1 modWithDot, name)
 
     classifyIdentifier firstChar isQualified ident
       | isQualified =
           let rev = T.reverse ident
-              (revName, revRest) = T.span (/= '.') rev
-              modName = T.reverse (T.drop 1 revRest)
-              name = T.reverse revName
-           in case T.uncons name of
-                Just (c', _)
-                  | isConIdStart c' -> TkQConId modName name
-                  | name == "do" && hasExt QualifiedDo env -> TkQualifiedDo modName
-                  | name == "mdo" && hasExt QualifiedDo env && hasExt RecursiveDo env -> TkQualifiedMdo modName
-                Just _ -> TkQVarId modName name
-                Nothing -> TkQVarId modName name
+           in case T.span (/= '.') rev of
+                (revName, revRest) ->
+                  let modName = T.reverse (T.drop 1 revRest)
+                      name = T.reverse revName
+                   in case T.uncons name of
+                        Just (c', _)
+                          | isConIdStart c' -> TkQConId modName name
+                          | name == "do" && hasExt QualifiedDo env -> TkQualifiedDo modName
+                          | name == "mdo" && hasExt QualifiedDo env && hasExt RecursiveDo env -> TkQualifiedMdo modName
+                        Just _ -> TkQVarId modName name
+                        Nothing -> TkQVarId modName name
       | otherwise =
           case keywordTokenKind (lexerExtensions env) ident of
             Just kw -> kw

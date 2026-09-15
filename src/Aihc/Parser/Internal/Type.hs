@@ -129,7 +129,7 @@ forallBinderParser =
     ( do
         expectedTok TkSpecialLBrace
         ident <- tyVarNameParser
-        mKind <- MP.optional (expectedTok TkReservedDoubleColon *> typeParser)
+        mKind <- optionalTokThen TkReservedDoubleColon typeParser
         expectedTok TkSpecialRBrace
         pure (\span' -> TyVarBinder [mkAnnotation span'] ident mKind TyVarBInferred TyVarBVisible)
     )
@@ -509,7 +509,7 @@ isStarTypeSymbol starIsType unicodeSyntax sym =
 typeListParser :: TokParser Type
 typeListParser = withSpanAnn (TAnn . mkAnnotation) $ do
   expectedTok TkSpecialLBracket
-  mClosed <- MP.optional (expectedTok TkSpecialRBracket)
+  mClosed <- optionalTokThen TkSpecialRBracket (pure ())
   case mClosed of
     Just () -> pure (TBuiltinCon BuiltinList Unpromoted)
     Nothing -> do
@@ -520,7 +520,7 @@ typeListParser = withSpanAnn (TAnn . mkAnnotation) $ do
 typeParenOrTupleParser :: TokParser Type
 typeParenOrTupleParser = withSpanAnn (TAnn . mkAnnotation) $ do
   (tupleFlavor, closeTok) <- tupleDelimsParser
-  mClosed <- MP.optional (expectedTok closeTok)
+  mClosed <- optionalTokThen closeTok (pure ())
   case mClosed of
     Just () -> pure (TTuple tupleFlavor Unpromoted [])
     Nothing -> do
@@ -535,17 +535,17 @@ typeParenOrTupleParser = withSpanAnn (TAnn . mkAnnotation) $ do
 
     parenthesizedTypeOrTupleParser tupleFlavor closeTok = do
       first <- typeParser
-      mKind <- if tupleFlavor == Boxed then MP.optional (expectedTok TkReservedDoubleColon *> typeParser) else pure Nothing
+      mKind <- if tupleFlavor == Boxed then optionalTokThen TkReservedDoubleColon typeParser else pure Nothing
       case mKind of
         Just kind -> do
           expectedTok closeTok
           pure (TParen (TKindSig first kind))
         Nothing -> do
-          mComma <- MP.optional (expectedTok TkSpecialComma)
+          mComma <- optionalTokThen TkSpecialComma (pure ())
           case mComma of
             Nothing -> do
               -- Check for pipe (unboxed sum type)
-              mPipe <- if tupleFlavor == Unboxed then MP.optional (expectedTok TkReservedPipe) else pure Nothing
+              mPipe <- if tupleFlavor == Unboxed then optionalTokThen TkReservedPipe (pure ()) else pure Nothing
               case mPipe of
                 Just () -> do
                   -- (# Type1 | Type2 | ... #) - unboxed sum type

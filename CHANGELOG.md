@@ -53,6 +53,41 @@ Together these cut the `bench-aihc-base` benchmark's allocation by about 20%
 (152 ms to 134 ms per iteration) and its peak heap by about 20%
 (21.4 MB to 17.1 MB).
 
+A second round of the same kind:
+
+- The layout engine builds one `LayoutState` per token instead of several.
+  Its intermediate results were bound with lazy tuple patterns, so every token
+  of every file allocated a pair and a selector thunk per component of it
+  before anything was looked at. The emitted token list also skips its three
+  `(<>)` thunks in the usual case, where no virtual token was inserted.
+- Peeking at the next token is a Megaparsec primitive (`peekToken` and
+  friends) that reads the stream's memoized successor, rather than
+  `lookAhead anySingle`. Every dispatch point in the parser used the latter,
+  and paid for a state save and restore, the `token` machinery and a monadic
+  bind each time.
+- Optional tokens are decided on the peeked token
+  (`optionalTokThen TkSpecialComma …`) instead of by running a parser and
+  recovering from its failure. This replaced 45 uses of
+  `MP.optional (expectedTok …)`, including the record braces and record dot
+  that used to be tried after every atom in the file.
+- The infix-operator chain, parenthesized operator sections such as `(+)`, the
+  record-construction base and type applications as function arguments are all
+  now chosen on the next token rather than by trying and backtracking.
+- A pragma declaration is recognized from the pending-pragma list on the
+  parser state, so an ordinary declaration no longer starts with a failed
+  pragma parse.
+- A declaration that starts with a variable identifier only tries the pattern
+  binding parser when the token after it is `@`, a constructor operator or a
+  backtick. Nothing else can make such a declaration a pattern binding, and a
+  function definition with arguments is the most common declaration there is.
+- `label` is a primitive too: a successful parse now goes straight to the
+  caller's continuation, with no `Either` box from `MP.observing` and no bind,
+  and the found token comes from the state the failure happened in.
+
+Together these cut the benchmark's allocation by a further 19% (2.52 GB to
+2.05 GB over five iterations) and its wall time by about 11% (150 ms to
+134 ms per iteration), at unchanged peak heap.
+
 ## [3.0.1.1] - 2026-09-15
 
 ### Fixed

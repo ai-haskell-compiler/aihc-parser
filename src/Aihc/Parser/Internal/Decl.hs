@@ -16,7 +16,7 @@ import Aihc.Parser.Internal.Pattern (apatParser, lpatParser, patParser, patternP
 import Aihc.Parser.Internal.Type (arrowKindParser, forallTelescopeParser, typeAppParser, typeAtomParser, typeInfixOperatorParser, typeInfixParser, typeParser, typeSignatureParser)
 import Aihc.Parser.Lex (LexTokenKind (..), lexTokenKind, pattern TkVarFamily, pattern TkVarRole)
 import Aihc.Parser.Syntax
-import Aihc.Parser.Types (ParserErrorComponent (..), mkFoundToken)
+import Aihc.Parser.Types (ParserErrorComponent (..), TokStream (..), mkFoundToken)
 import Control.Monad (when)
 import Data.Char (isLower)
 import Data.Functor (($>))
@@ -39,8 +39,16 @@ anyPragmaParser expectedLabel = hiddenPragma expectedLabel Just
 --
 -- > decl -> gendecl
 -- >      | (funlhs | pat) rhs
+-- | A pragma declaration is only possible when the lexer has actually set a
+-- hidden pragma aside, so the state says so directly.  Trying
+-- 'pragmaDeclParser' first instead made every ordinary declaration pay for a
+-- parser failure, with the error and hints that go with it.
 declParser :: TokParser Decl
-declParser = pragmaDeclParser <|> ordinaryDeclParser
+declParser = do
+  pst <- MP.getParserState
+  case tokStreamPendingPragmas (MP.stateInput pst) of
+    [] -> ordinaryDeclParser
+    _ -> pragmaDeclParser <|> ordinaryDeclParser
 
 ordinaryDeclParser :: TokParser Decl
 ordinaryDeclParser = do
@@ -94,8 +102,31 @@ ordinaryDeclParser = do
         TkReservedDoubleColon -> sigOrValueDecl
         TkSpecialComma -> sigOrValueDecl
         TkReservedEquals -> valueDecl
-        _ -> nonBareVarPatternBindDeclParser <|> valueDecl
+        _
+          | patternBindMayFollowVarId nextTokKind ->
+              nonBareVarPatternBindDeclParser <|> valueDecl
+          | otherwise -> valueDecl
     _ -> fallbackDecl
+
+-- | Whether a declaration whose first token is a variable identifier can
+-- still be a pattern binding, given the token after it.
+--
+-- A variable identifier on its own is a bare variable pattern, which
+-- 'nonBareVarPatternBindDeclParser' rejects, so the only pattern bindings
+-- that start with one are an as-pattern (@x\@p = ...@) and an infix
+-- constructor pattern (@x : xs = ...@, @x \`Cons\` y = ...@).  Every other
+-- second token means the declaration is a function binding, and trying the
+-- pattern parser first only to backtrack was pure cost: a function
+-- definition with arguments is the most common declaration there is.
+patternBindMayFollowVarId :: LexTokenKind -> Bool
+patternBindMayFollowVarId kind =
+  case kind of
+    TkReservedAt -> True
+    TkConSym {} -> True
+    TkQConSym {} -> True
+    TkReservedColon -> True
+    TkSpecialBacktick -> True
+    _ -> False
 
 -- | Like 'patternBindDeclParser' but rejects bare variable patterns.
 -- When the leading token is a variable identifier, a bare @x = 5@ must be
@@ -215,7 +246,7 @@ declHeadPreferringInlineKind headParser =
     )
     <|> do
       (context, head') <- declHeadWithOptionalContext headParser
-      inlineKind <- MP.optional (expectedTok TkReservedDoubleColon *> typeParser)
+      inlineKind <- optionalTokThen TkReservedDoubleColon typeParser
       pure (context, head', inlineKind)
 
 -- | Parse a declaration head that may be preceded by a context.
@@ -240,7 +271,7 @@ explicitForallParser = do
 -- | Parse an optional unnamed @:: Kind@ result signature for a family head.
 familyResultKindParser :: TokParser (Maybe Type)
 familyResultKindParser =
-  MP.optional (expectedTok TkReservedDoubleColon *> typeParser)
+  optionalTokThen TkReservedDoubleColon typeParser
 
 -- | Parse an optional type family result signature. GHC admits either an unnamed
 -- @:: Kind@ annotation or a named result variable with optional injectivity annotation,
@@ -474,7 +505,7 @@ classDefaultTypeInstParser' requireInstance = withSpanAnn (ClassItemAnn . mkAnno
 instanceTypeFamilyInstParser :: TokParser InstanceDeclItem
 instanceTypeFamilyInstParser = withSpanAnn (InstanceItemAnn . mkAnnotation) $ do
   expectedTok TkKeywordType
-  _ <- MP.optional (expectedTok TkKeywordInstance)
+  _ <- optionalTokThen TkKeywordInstance (pure ())
   forallBinders <- MP.option [] explicitForallParser
   (headForm, lhs) <- typeFamilyLhsParser
   expectedTok TkReservedEquals
@@ -493,7 +524,7 @@ instanceTypeFamilyInstParser = withSpanAnn (InstanceItemAnn . mkAnnotation) $ do
 instanceDataFamilyInstParser :: TokParser InstanceDeclItem
 instanceDataFamilyInstParser = withSpanAnn (InstanceItemAnn . mkAnnotation) $ do
   expectedTok TkKeywordData
-  _ <- MP.optional (expectedTok TkKeywordInstance)
+  _ <- optionalTokThen TkKeywordInstance (pure ())
   (_, head') <- typeFamilyLhsParser
   kind <- familyResultKindParser
   (constructors, derivingClauses) <- gadtDataDeclParser <|> traditionalDataDeclParser
@@ -513,7 +544,7 @@ instanceDataFamilyInstParser = withSpanAnn (InstanceItemAnn . mkAnnotation) $ do
 instanceNewtypeFamilyInstParser :: TokParser InstanceDeclItem
 instanceNewtypeFamilyInstParser = withSpanAnn (InstanceItemAnn . mkAnnotation) $ do
   expectedTok TkKeywordNewtype
-  _ <- MP.optional (expectedTok TkKeywordInstance)
+  _ <- optionalTokThen TkKeywordInstance (pure ())
   (_, head') <- typeFamilyLhsParser
   kind <- familyResultKindParser
   expectedTok TkReservedEquals
@@ -769,7 +800,7 @@ instanceDeclItemParser :: TokParser InstanceDeclItem
 instanceDeclItemParser =
   instancePragmaItemParser
     <|> do
-      tok <- lookAhead anySingle
+      tok <- peekToken
       typeSigPrefix <- startsWithTypeSig
       case lexTokenKind tok of
         TkKeywordInfix -> instanceFixityItemParser
@@ -868,7 +899,7 @@ foreignEntityFromString txt
 
 traditionalDataDeclParser :: TokParser ([DataConDecl], [DerivingClause])
 traditionalDataDeclParser = do
-  constructors <- MP.optional (expectedTok TkReservedEquals *> dataConDeclParser `MP.sepBy1` expectedTok TkReservedPipe)
+  constructors <- optionalTokThen TkReservedEquals (dataConDeclParser `MP.sepBy1` expectedTok TkReservedPipe)
   derivingClauses <- MP.many derivingClauseParser
   pure (fromMaybe [] constructors, derivingClauses)
 
@@ -912,7 +943,7 @@ typeDataDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
   -- type data may not have a datatype context
   typeHead <- typeDeclHeadParser
   -- Parse optional inline kind signature: @:: Kind@
-  inlineKind <- MP.optional (expectedTok TkReservedDoubleColon *> typeParser)
+  inlineKind <- optionalTokThen TkReservedDoubleColon typeParser
   -- GADT syntax starts with `where`, traditional syntax starts with `=` or nothing
   constructors <- gadtStyleTypeDataDecl <|> traditionalStyleTypeDataDecl
   -- type data may not have a deriving clause
@@ -928,7 +959,7 @@ typeDataDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
         }
   where
     traditionalStyleTypeDataDecl =
-      fromMaybe [] <$> MP.optional (expectedTok TkReservedEquals *> typeDataConDeclParser `MP.sepBy1` expectedTok TkReservedPipe)
+      fromMaybe [] <$> optionalTokThen TkReservedEquals (typeDataConDeclParser `MP.sepBy1` expectedTok TkReservedPipe)
 
     gadtStyleTypeDataDecl = gadtTypeDataWhereClauseParser
 
@@ -1005,7 +1036,7 @@ gadtTypeDataBodyParser = do
 dataConDeclParser :: TokParser DataConDecl
 dataConDeclParser = withSpanAnn (DataConAnn . mkAnnotation) $ do
   (forallVars, context) <- dataConQualifiersParser
-  tok <- lookAhead anySingle
+  tok <- peekToken
   case lexTokenKind tok of
     -- `(#` is either the LHS arg of an infix constructor (e.g. @(# #) :. Int@) or a
     -- standalone unboxed tuple/sum constructor (e.g. @(# Int, Bool #)@).
@@ -1032,7 +1063,7 @@ listConDeclParser forallVars context = do
 boxedTupleConDeclParser :: [TyVarBinder] -> [Type] -> TokParser DataConDecl
 boxedTupleConDeclParser forallVars context = do
   expectedTok TkSpecialLParen
-  mClose <- MP.optional (expectedTok TkSpecialRParen)
+  mClose <- optionalTokThen TkSpecialRParen (pure ())
   case mClose of
     Just () ->
       pure (TupleCon forallVars context Boxed [])
@@ -1050,7 +1081,7 @@ boxedTupleConDeclParser forallVars context = do
 unboxedConDeclParser :: [TyVarBinder] -> [Type] -> TokParser DataConDecl
 unboxedConDeclParser forallVars context = do
   expectedTok TkSpecialUnboxedLParen
-  mClose <- MP.optional (expectedTok TkSpecialUnboxedRParen)
+  mClose <- optionalTokThen TkSpecialUnboxedRParen (pure ())
   case mClose of
     Just () ->
       pure (TupleCon forallVars context Unboxed [])
@@ -1103,7 +1134,7 @@ newtypeDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
         }
   where
     traditionalStyleNewtypeDecl = do
-      constructor <- MP.optional (expectedTok TkReservedEquals *> dataConDeclParser)
+      constructor <- optionalTokThen TkReservedEquals dataConDeclParser
       derivingClauses <- MP.many derivingClauseParser
       pure (constructor, derivingClauses)
 
@@ -1404,7 +1435,7 @@ typeFamilyDeclBodyParser familyKeywordMode = do
   expectedTok TkKeywordType
   explicitFamilyKeyword <- case familyKeywordMode of
     FamilyKeywordRequired -> expectedTok TkVarFamily $> True
-    FamilyKeywordOptional -> isJust <$> MP.optional (expectedTok TkVarFamily)
+    FamilyKeywordOptional -> isJust <$> optionalTokThen TkVarFamily (pure ())
   (headForm, headType, params) <- typeFamilyHeadParser
   resultSig <- typeFamilyResultSigParser explicitFamilyKeyword
   equations <-
@@ -1643,7 +1674,7 @@ patSynDirAndPatParser name =
               Just matches -> pure (PatSynExplicitBidirectional matches, pat)
         )
     <|> do
-      mTok <- MP.optional (lookAhead anySingle)
+      mTok <- peekTokenMaybe
       MP.customFailure
         UnexpectedTokenExpecting
           { unexpectedFound = mkFoundToken <$> mTok,
