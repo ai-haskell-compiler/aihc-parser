@@ -204,8 +204,6 @@
           runtimeInputs = [
             pkgs.bash
             pkgs.git
-            pkgs.llvmPackages.clang
-            hsPkgs.cpphs
           ];
           text = ''
             set -euo pipefail
