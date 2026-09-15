@@ -736,6 +736,12 @@ effectiveExtensions edition = List.foldl' applyOne (languageEditionExtensions ed
 -- the single most numerous heap object in a parse tree.  The packing is an
 -- implementation detail: the 'SourceSpan' pattern synonym below constructs
 -- and matches spans in terms of the seven logical fields.
+--
+-- Six @{-\# UNPACK \#-} !Word32@ fields would give exactly the same five-word
+-- closure, because GHC packs unpacked sub-word fields two to a machine word,
+-- and would need no shifting here.  It was measured and is about 3% slower on
+-- the @bench-aihc-base@ benchmark at byte-identical allocation, so the
+-- explicit packing stays.
 data SourceSpan
   = -- | No location information is available.
     NoSourceSpan
