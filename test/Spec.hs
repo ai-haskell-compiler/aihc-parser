@@ -240,6 +240,7 @@ buildTests = do
             testCase "lexes string gaps before a closing quote" test_stringGapBeforeClosingQuoteLexes,
             testCase "pretty-prints overloaded labels with delimiter spacing" test_overloadedLabelPrettyPrintsWithDelimiterSpacing,
             testCase "applies LINE pragmas to subsequent tokens" test_linePragmaUpdatesSpan,
+            testCase "applies a LINE pragma file name to subsequent tokens" test_linePragmaUpdatesSourceName,
             testCase "applies COLUMN pragmas to subsequent tokens" test_columnPragmaUpdatesSpan,
             testCase "applies COLUMN pragmas in the middle of a line" test_inlineColumnPragmaUpdatesSpan,
             testCase "sets lexTokenAtLineStart correctly" test_tokenAtLineStartWithoutDirective,
@@ -532,6 +533,13 @@ test_linePragmaUpdatesSpan =
     [LexToken {lexTokenKind = TkVarId "x", lexTokenSpan = span'}, LexToken {lexTokenKind = TkEOF}] ->
       assertSourceSpan "<input>" 17 1 17 2 16 17 span'
     other -> assertFailure ("expected identifier at line 17, got: " <> show other)
+
+test_linePragmaUpdatesSourceName :: Assertion
+test_linePragmaUpdatesSourceName =
+  case lexTokens "{-# LINE 14 \"Demo.hsc\" #-}\nx" of
+    [LexToken {lexTokenKind = TkVarId "x", lexTokenSpan = span'}, LexToken {lexTokenKind = TkEOF}] ->
+      assertSourceSpan "Demo.hsc" 14 1 14 2 27 28 span'
+    other -> assertFailure ("expected identifier at Demo.hsc line 14, got: " <> show other)
 
 test_columnPragmaUpdatesSpan :: Assertion
 test_columnPragmaUpdatesSpan =
