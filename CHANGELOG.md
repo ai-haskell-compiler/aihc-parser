@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A `{-# LINE n "file" #-}` pragma now applies its file name. The file name was
+  dropped for every well-formed LINE pragma, so spans after one kept the source
+  name the caller passed in while taking their line and column from the pragma.
+  The equivalent `#line` directive was already handled correctly.
+
 ### Removed
 
 - The CPP preprocessor benchmark. `BENCHMARKS.md` no longer carries a "CPP

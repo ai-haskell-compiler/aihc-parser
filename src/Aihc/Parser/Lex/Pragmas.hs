@@ -306,8 +306,8 @@ parseControlPragma input = do
     _
       | Just rest <- T.stripPrefix "LINE" upperBody,
         isPragmaBodyEnd rest ->
-          let bodyAfter = dropPragmaName "LINE" trimmed
-              ws = T.words bodyAfter
+          let afterName = T.stripStart (dropPragmaName "LINE" trimmed)
+              ws = T.words afterName
            in case ws of
                 lineNo : _
                   | T.all isDigit lineNo ->
@@ -319,7 +319,7 @@ parseControlPragma input = do
                                 DirectiveUpdate
                                   { directiveLine = Just parsedLine,
                                     directiveCol = Just 1,
-                                    directiveSourceName = parseDirectiveSourceName (T.dropWhile isSpace (T.drop (T.length lineNo) bodyAfter))
+                                    directiveSourceName = parseDirectiveSourceName (T.drop (T.length lineNo) afterName)
                                   }
                             )
                         Nothing -> Just ("{-#" <> body <> "#-}", Left "malformed LINE pragma")
