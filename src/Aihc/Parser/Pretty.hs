@@ -278,6 +278,51 @@ prettyDeclLines decl =
     DeclTypeFamilyInst tfi -> [prettyTopTypeFamilyInst tfi]
     DeclDataFamilyInst dfi -> [prettyTopDataFamilyInst dfi]
     DeclPragma pragma -> [prettyPragma pragma]
+    DeclRules rules -> prettyRulesLines rules
+
+-- | A @RULES@ pragma, one rule per line. Every rule after the first starts
+-- with an explicit semicolon in the first column, so the rules are separated
+-- whether or not an enclosing layout context supplies semicolons, and the
+-- closing @#-}@ stands in the first column so that it ends any layout
+-- context a rule opened.
+prettyRulesLines :: [RuleDecl] -> [Doc ann]
+prettyRulesLines rules =
+  ["{-# RULES"]
+    <> zipWith prettyRuleLine [0 :: Int ..] rules
+    <> ["#-}"]
+  where
+    prettyRuleLine index rule
+      | index == 0 = nest 2 (prettyRuleDecl rule)
+      | otherwise = nest 2 (";" <+> prettyRuleDecl rule)
+
+prettyRuleDecl :: RuleDecl -> Doc ann
+prettyRuleDecl rule =
+  hsep
+    ( [pretty (show (ruleName rule))]
+        <> maybe [] (pure . prettyRuleActivation) (ruleActivation rule)
+        <> foralls
+        <> [prettyExpr (ruleLhs rule), "=", prettyExpr (ruleRhs rule)]
+    )
+  where
+    foralls =
+      case (ruleTypeBinders rule, ruleBinders rule) of
+        ([], []) -> []
+        ([], binders) -> [ruleForall (map prettyRuleBinder binders)]
+        (typeBinders, binders) -> [ruleForall (map prettyTyVarBinder typeBinders), ruleForall (map prettyRuleBinder binders)]
+    ruleForall binders = hsep ("forall" : binders) <> "."
+
+prettyRuleActivation :: RuleActivation -> Doc ann
+prettyRuleActivation activation =
+  case activation of
+    RuleActiveAfter phase -> brackets (pretty phase)
+    RuleActiveBefore phase -> brackets ("~" <> pretty phase)
+    RuleNeverActive -> brackets "~"
+
+prettyRuleBinder :: RuleBinder -> Doc ann
+prettyRuleBinder binder =
+  case ruleBinderType binder of
+    Nothing -> prettyBinderName (ruleBinderName binder)
+    Just ty -> parens (prettyBinderName (ruleBinderName binder) <+> "::" <+> prettyType ty)
 
 prettyRoleAnnotation :: RoleAnnotation -> Doc ann
 prettyRoleAnnotation ann =

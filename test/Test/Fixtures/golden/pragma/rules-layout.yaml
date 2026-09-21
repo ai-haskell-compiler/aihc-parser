@@ -1,0 +1,12 @@
+extensions: []
+input: |
+  module Demo where
+  {-# RULES
+  "map/map" [2] forall f g xs. map f (map g xs) = map (f . g) xs
+  "map/id" [~1] forall xs. map id xs = xs
+  "fold/build" forall k z (g :: forall b. (a -> b -> b) -> b -> b) . foldr k z (build g) = g k z
+    #-}
+  x = 1
+ast: |-
+  Module {ModuleHead {"Demo"}, [DeclRules [RuleDecl {"map/map", RuleActiveAfter 2, [RuleBinder {"f"}, RuleBinder {"g"}, RuleBinder {"xs"}], EApp (EApp (EVar "map") (EVar "f")) (EParen (EApp (EApp (EVar "map") (EVar "g")) (EVar "xs"))), EApp (EApp (EVar "map") (EParen (EInfix (EVar "f") "." (EVar "g")))) (EVar "xs")}, RuleDecl {"map/id", RuleActiveBefore 1, [RuleBinder {"xs"}], EApp (EApp (EVar "map") (EVar "id")) (EVar "xs"), EVar "xs"}, RuleDecl {"fold/build", [RuleBinder {"k"}, RuleBinder {"z"}, RuleBinder {"g", Just (TForall [TyVarBinder {"b"}] (TFun (TParen (TFun (TVar "a") (TFun (TVar "b") (TVar "b")))) (TFun (TVar "b") (TVar "b"))))}], EApp (EApp (EApp (EVar "foldr") (EVar "k")) (EVar "z")) (EParen (EApp (EVar "build") (EVar "g"))), EApp (EApp (EVar "g") (EVar "k")) (EVar "z")}], DeclValue (PatternBind (PVar "x") (EInt 1 TInteger))]}
+status: pass

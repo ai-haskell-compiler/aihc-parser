@@ -194,6 +194,8 @@ genLexTokenKind =
       TkPragma . (\pt -> Syntax.Pragma {Syntax.pragmaType = pt, Syntax.pragmaRawText = ""}) <$> (Syntax.PragmaSource <$> genTokenText <*> genTokenText),
       TkPragma . (\pt -> Syntax.Pragma {Syntax.pragmaType = pt, Syntax.pragmaRawText = ""}) . Syntax.PragmaSCC <$> genTokenText,
       TkPragma . (\pt -> Syntax.Pragma {Syntax.pragmaType = pt, Syntax.pragmaRawText = ""}) . Syntax.PragmaUnknown <$> genTokenText,
+      TkPragmaOpen <$> genTokenText,
+      pure TkPragmaClose,
       TkVarId <$> genIdentifierText,
       TkConId <$> genConstructorText,
       TkQVarId <$> genModuleText <*> genIdentifierText,

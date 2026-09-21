@@ -24,6 +24,7 @@ import Test.Properties.Arb.Identifiers
     genConName,
     genConSym,
     genConUnqualifiedName,
+    genStringValue,
     genVarId,
     genVarIdNoHash,
     genVarName,
@@ -69,6 +70,7 @@ genDecl =
         genDeclTypeFamilyInst,
         genDeclDataFamilyInst,
         genDeclPragma,
+        genDeclRules,
         genDeclPatSyn,
         genDeclPatSynSig,
         genDeclStandaloneKindSig
@@ -1109,6 +1111,59 @@ genDeclPragma = do
 mkPragma :: PragmaType -> Pragma
 mkPragma pt = Pragma {pragmaType = pt, pragmaRawText = ""}
 
+genDeclRules :: Gen Decl
+genDeclRules = DeclRules <$> smallList0 genRuleDecl
+
+genRuleDecl :: Gen RuleDecl
+genRuleDecl = do
+  name <- genStringValue
+  activation <- optional genRuleActivation
+  typeBinders <- smallList0 genSimpleTyVarBinder
+  binders <- smallList0 genRuleBinder
+  lhs <- genRuleLhs
+  rhs <- genExpr
+  pure
+    RuleDecl
+      { ruleAnns = [],
+        ruleName = name,
+        ruleActivation = activation,
+        ruleTypeBinders = typeBinders,
+        ruleBinders = binders,
+        ruleLhs = lhs,
+        ruleRhs = rhs
+      }
+
+genRuleActivation :: Gen RuleActivation
+genRuleActivation =
+  oneof
+    [ RuleActiveAfter <$> chooseInt (0, 3),
+      RuleActiveBefore <$> chooseInt (0, 3),
+      pure RuleNeverActive
+    ]
+
+genRuleBinder :: Gen RuleBinder
+genRuleBinder = RuleBinder [] . mkUnqualifiedName NameVarId <$> genVarId <*> optional genType
+
+-- | A left-hand side is a variable applied to arguments, as GHC requires.
+genRuleLhs :: Gen Expr
+genRuleLhs = do
+  headName <- genVarName
+  args <- smallList0 genExpr
+  pure (foldl EApp (EVar headName) args)
+
+shrinkRuleDecl :: RuleDecl -> [RuleDecl]
+shrinkRuleDecl rule =
+  [rule {ruleActivation = Nothing} | isJust (ruleActivation rule)]
+    <> [rule {ruleTypeBinders = binders'} | binders' <- shrinkTyVarBinders (ruleTypeBinders rule)]
+    <> [rule {ruleBinders = binders'} | binders' <- shrinkList shrinkRuleBinder (ruleBinders rule)]
+    <> [rule {ruleLhs = lhs'} | lhs' <- shrinkExpr (ruleLhs rule)]
+    <> [rule {ruleRhs = rhs'} | rhs' <- shrinkExpr (ruleRhs rule)]
+
+shrinkRuleBinder :: RuleBinder -> [RuleBinder]
+shrinkRuleBinder binder =
+  [binder {ruleBinderType = Nothing} | isJust (ruleBinderType binder)]
+    <> [binder {ruleBinderType = Just ty'} | Just ty <- [ruleBinderType binder], ty' <- shrinkType ty]
+
 genDeclPatSyn :: Gen Decl
 genDeclPatSyn = do
   synName <- genConUnqualifiedName
@@ -1235,6 +1290,8 @@ shrinkDecl decl =
     DeclDataFamilyInst dfi ->
       [DeclDataFamilyInst dfi' | dfi' <- shrinkDataFamilyInst dfi]
     DeclPragma _ -> []
+    DeclRules rules ->
+      [DeclRules rules' | rules' <- shrinkList shrinkRuleDecl rules]
 
 -- ---------------------------------------------------------------------------
 -- Value declarations (function binds and pattern binds)

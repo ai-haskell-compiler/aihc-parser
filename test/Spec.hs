@@ -648,6 +648,7 @@ test_everyTopLevelDeclarationCarriesSourceSpan =
             "type instance F Int = Bool",
             "data instance DF Int = DFInt",
             "{-# INLINE f #-}",
+            "{-# RULES \"f/g\" forall x. f (g x) = x #-}",
             "pattern Q :: Int -> T Int",
             "pattern Q x = MkT x",
             "$(pure [])"
