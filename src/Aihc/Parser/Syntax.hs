@@ -87,6 +87,9 @@ module Aihc.Parser.Syntax
     Role (..),
     RoleAnnotation (..),
     Rhs (..),
+    RuleActivation (..),
+    RuleBinder (..),
+    RuleDecl (..),
     SourceSpan,
     pattern SourceSpan,
     sourceSpanSourceName,
@@ -1203,6 +1206,48 @@ data Decl
     DeclDataFamilyInst DataFamilyInst
   | -- | A standalone pragma declaration such as @{-# INLINE f #-}@.
     DeclPragma Pragma
+  | -- | @{-# RULES "map/map" forall f g xs. map f (map g xs) = map (f . g) xs #-}@
+    DeclRules [RuleDecl]
+  deriving (Data, Eq, Show, Generic, NFData)
+
+-- | One rewrite rule of a @RULES@ pragma.
+-- Example: @"map/map" [2] forall f g xs. map f (map g xs) = map (f . g) xs@.
+data RuleDecl = RuleDecl
+  { ruleAnns :: [Annotation],
+    -- | The name in double quotes. It only identifies the rule in reports.
+    ruleName :: Text,
+    -- | The phase control after the name, such as @[2]@ or @[~2]@.
+    ruleActivation :: Maybe RuleActivation,
+    -- | The type variables of a leading @forall a b.@ that a second
+    -- @forall@ follows. A rule with one @forall@ binds only term variables.
+    ruleTypeBinders :: [TyVarBinder],
+    -- | The pattern variables bound by @forall@.
+    ruleBinders :: [RuleBinder],
+    -- | The left-hand side, matched against the program.
+    ruleLhs :: Expr,
+    -- | The right-hand side, put in place of a match.
+    ruleRhs :: Expr
+  }
+  deriving (Data, Eq, Show, Generic, NFData)
+
+-- | The phases in which a rule is active.
+-- Examples: @[2]@, @[~2]@, and @[~]@.
+data RuleActivation
+  = -- | @[n]@: active in phase @n@ and later phases.
+    RuleActiveAfter Int
+  | -- | @[~n]@: active before phase @n@.
+    RuleActiveBefore Int
+  | -- | @[~]@: never active.
+    RuleNeverActive
+  deriving (Data, Eq, Show, Generic, NFData)
+
+-- | One pattern variable of a rule, bound by @forall@.
+-- Examples: @xs@ and @(g :: forall b. (a -> b -> b) -> b -> b)@.
+data RuleBinder = RuleBinder
+  { ruleBinderAnns :: [Annotation],
+    ruleBinderName :: UnqualifiedName,
+    ruleBinderType :: Maybe Type
+  }
   deriving (Data, Eq, Show, Generic, NFData)
 
 -- | Peel nested 'DeclAnn' wrappers.

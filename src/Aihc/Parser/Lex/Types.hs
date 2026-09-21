@@ -162,6 +162,11 @@ data LexTokenKind
     TkTypeApp
   | -- Pragmas
     TkPragma Pragma
+  | -- | The opening of a pragma whose body is lexed as ordinary tokens,
+    -- such as @{-# RULES@. The text is the pragma keyword in upper case.
+    TkPragmaOpen Text
+  | -- | The @#-}@ that closes a pragma opened by 'TkPragmaOpen'.
+    TkPragmaClose
   | -- TemplateHaskellQuotes bracket tokens
     TkTHExpQuoteOpen
   | TkTHExpQuoteClose
@@ -232,7 +237,10 @@ data LexerState = LexerState
     lexerByteOffset :: !Int,
     lexerAtLineStart :: !Bool,
     lexerPrevTokenKind :: !(Maybe LexTokenKind),
-    lexerHadTrivia :: !Bool
+    lexerHadTrivia :: !Bool,
+    -- | Whether the lexer is inside a pragma opened by 'TkPragmaOpen', so
+    -- that the next @#-}@ closes it.
+    lexerInPragma :: !Bool
   }
   deriving (Eq, Show)
 
@@ -331,7 +339,8 @@ mkInitialLexerState sourceName exts input =
         lexerByteOffset = 0,
         lexerAtLineStart = True,
         lexerPrevTokenKind = Nothing,
-        lexerHadTrivia = True
+        lexerHadTrivia = True,
+        lexerInPragma = False
       }
   )
 

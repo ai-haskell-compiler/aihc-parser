@@ -630,6 +630,23 @@ addDeclParens decl =
     DeclTypeFamilyInst tfi -> DeclTypeFamilyInst (addTypeFamilyInstParens tfi)
     DeclDataFamilyInst dfi -> DeclDataFamilyInst (addDataFamilyInstParens dfi)
     DeclPragma {} -> decl
+    DeclRules rules -> DeclRules (map addRuleDeclParens rules)
+
+-- | Parenthesize the sides and binder types of a rewrite rule. The
+-- left-hand side is followed by @=@ on the same line, so a side whose
+-- rightmost part would take the @=@ into itself is wrapped.
+addRuleDeclParens :: RuleDecl -> RuleDecl
+addRuleDeclParens rule =
+  rule
+    { ruleTypeBinders = map addTyVarBinderParens (ruleTypeBinders rule),
+      ruleBinders = map addRuleBinderParens (ruleBinders rule),
+      ruleLhs = wrapExpr (lhsNeedsParens (ruleLhs rule)) (addExprParens (ruleLhs rule)),
+      ruleRhs = addExprParens (ruleRhs rule)
+    }
+  where
+    lhsNeedsParens expr = isGreedyExpr expr || isOpenEnded expr || endsWithTypeSig expr
+    addRuleBinderParens binder =
+      binder {ruleBinderType = fmap addSignatureTypeParens (ruleBinderType binder)}
 
 addDeclSpliceParens :: Expr -> Expr
 addDeclSpliceParens = addExprParens

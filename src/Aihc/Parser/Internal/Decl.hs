@@ -97,6 +97,7 @@ ordinaryDeclParser = do
         TkKeywordInstance -> typeFamilyInstParser
         _ -> typeDeclarationParser
     TkKeywordPattern -> patternSynonymParser
+    TkPragmaOpen "RULES" -> rulesDeclParser
     TkVarId {} ->
       case nextTokKind of
         TkReservedDoubleColon -> sigOrValueDecl
@@ -144,6 +145,118 @@ nonBareVarPatternBindDeclParser = MP.try $ withSpanAnn (DeclAnn . mkAnnotation) 
 -- | Parse a pragma declaration (e.g. {-# INLINE f #-}, {-# SPECIALIZE ... #-})
 pragmaDeclParser :: TokParser Decl
 pragmaDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ DeclPragma <$> anyPragmaParser "pragma declaration"
+
+-- | Parse a @RULES@ pragma:
+--
+-- > {-# RULES "map/map" [2] forall f g xs. map f (map g xs) = map (f . g) xs #-}
+--
+-- The lexer opens the pragma with 'TkPragmaOpen' and closes it with
+-- 'TkPragmaClose', and lexes the rules between them as ordinary tokens. The
+-- rules are separated by semicolons, which the layout rule supplies for a
+-- rule that starts in the column of the enclosing declarations.
+rulesDeclParser :: TokParser Decl
+rulesDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
+  expectedTok (TkPragmaOpen "RULES")
+  rules <- region "while parsing RULES pragma" (plainSemiSep ruleDeclParser)
+  expectedTok TkPragmaClose
+  pure (DeclRules rules)
+
+-- | One rule:
+--
+-- > "name" [2] forall a. forall (x :: a) y. lhs = rhs
+--
+-- With one @forall@, every binder is a pattern variable. With two, the
+-- first binds type variables and the second the pattern variables.
+ruleDeclParser :: TokParser RuleDecl
+ruleDeclParser = withSpan $ do
+  name <- stringTextParser
+  activation <- MP.optional ruleActivationParser
+  binders <- MP.option [] ruleForallParser
+  (typeBinders, termBinders) <-
+    MP.option ([], binders) $ do
+      termBinders <- ruleForallParser
+      pure (map ruleBinderToTyVarBinder binders, termBinders)
+  lhs <- region "while parsing rule left-hand side" exprParser
+  expectedTok TkReservedEquals
+  rhs <- region "while parsing rule right-hand side" exprParser
+  pure $ \span' ->
+    RuleDecl
+      { ruleAnns = [mkAnnotation span'],
+        ruleName = name,
+        ruleActivation = activation,
+        ruleTypeBinders = typeBinders,
+        ruleBinders = termBinders,
+        ruleLhs = lhs,
+        ruleRhs = rhs
+      }
+
+-- | The phase control of a rule: @[n]@, @[~n]@ or @[~]@.
+ruleActivationParser :: TokParser RuleActivation
+ruleActivationParser = do
+  expectedTok TkSpecialLBracket
+  activation <-
+    (ruleTildeParser *> (RuleActiveBefore <$> rulePhaseParser <|> pure RuleNeverActive))
+      <|> (RuleActiveAfter <$> rulePhaseParser)
+  expectedTok TkSpecialRBracket
+  pure activation
+
+ruleTildeParser :: TokParser ()
+ruleTildeParser =
+  tokenSatisfy "~" $ \tok ->
+    case lexTokenKind tok of
+      TkPrefixTilde -> Just ()
+      TkVarSym "~" -> Just ()
+      _ -> Nothing
+
+rulePhaseParser :: TokParser Int
+rulePhaseParser =
+  tokenSatisfy "phase number" $ \tok ->
+    case lexTokenKind tok of
+      TkInteger n _ | n >= 0 && n <= fromIntegral (maxBound :: Int) -> Just (fromInteger n)
+      _ -> Nothing
+
+-- | @forall x (y :: t).@
+ruleForallParser :: TokParser [RuleBinder]
+ruleForallParser = do
+  expectedTok TkKeywordForall
+  binders <- MP.many ruleBinderParser
+  expectedTok (TkVarSym ".")
+  pure binders
+
+-- | @x@ or @(x :: t)@.
+ruleBinderParser :: TokParser RuleBinder
+ruleBinderParser =
+  withSpan $
+    ( do
+        name <- ruleBinderNameParser
+        pure (\span' -> RuleBinder [mkAnnotation span'] name Nothing)
+    )
+      <|> ( do
+              expectedTok TkSpecialLParen
+              name <- ruleBinderNameParser
+              expectedTok TkReservedDoubleColon
+              ty <- typeParser
+              expectedTok TkSpecialRParen
+              pure (\span' -> RuleBinder [mkAnnotation span'] name (Just ty))
+          )
+
+ruleBinderNameParser :: TokParser UnqualifiedName
+ruleBinderNameParser =
+  tokenSatisfy "rule variable" $ \tok ->
+    case lexTokenKind tok of
+      TkVarId ident -> Just (mkUnqualifiedNameAt tok NameVarId ident)
+      _ -> Nothing
+
+-- | A binder of the first of two @forall@s binds a type variable.
+ruleBinderToTyVarBinder :: RuleBinder -> TyVarBinder
+ruleBinderToTyVarBinder binder =
+  TyVarBinder
+    { tyVarBinderAnns = ruleBinderAnns binder,
+      tyVarBinderName = unqualifiedNameText (ruleBinderName binder),
+      tyVarBinderKind = ruleBinderType binder,
+      tyVarBinderSpecificity = TyVarBSpecified,
+      tyVarBinderVisibility = TyVarBVisible
+    }
 
 -- | Check whether the expression-as-declaration fallback is enabled.
 -- GHC allows top-level expressions under TemplateHaskell (bare splices),

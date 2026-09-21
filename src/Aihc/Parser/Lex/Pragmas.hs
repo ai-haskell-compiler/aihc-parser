@@ -3,6 +3,7 @@
 
 module Aihc.Parser.Lex.Pragmas
   ( tryParsePragma,
+    tryParsePragmaClose,
     parsePragmaType,
     parseControlPragma,
   )
@@ -25,13 +26,48 @@ import Text.Read (readMaybe)
 
 -- | Single entry point for pragma parsing.
 -- Scans "{-# ... #-}" once, then parses the body to determine which Pragma it is.
+--
+-- A pragma whose body is Haskell syntax, such as @RULES@, does not become one
+-- token. The lexer emits a 'TkPragmaOpen' token for its opening and keyword,
+-- lexes the body as ordinary tokens, and emits 'TkPragmaClose' at its @#-}@
+-- (see 'tryParsePragmaClose'). The body then takes part in layout like the
+-- code around it, which is how GHC reads it.
 tryParsePragma :: LexerState -> Maybe (LexToken, LexerState)
 tryParsePragma st = do
   (rawBody, consumedLen) <- extractPragmaBody (lexerInput st)
-  let fullText = "{-#" <> rawBody <> "#-}"
-      pragma = Pragma {pragmaType = parsePragmaType rawBody, pragmaRawText = fullText}
-      st' = advanceN consumedLen st
-  Just (mkToken st st' fullText (TkPragma pragma), st')
+  case openPragmaKeyword rawBody of
+    Just (keyword, openLen) ->
+      let st' = (advanceN openLen st) {lexerInPragma = True}
+       in Just (mkToken st st' (T.take openLen (lexerInput st)) (TkPragmaOpen keyword), st')
+    Nothing ->
+      let fullText = "{-#" <> rawBody <> "#-}"
+          pragma = Pragma {pragmaType = parsePragmaType rawBody, pragmaRawText = fullText}
+          st' = advanceN consumedLen st
+       in Just (mkToken st st' fullText (TkPragma pragma), st')
+
+-- | The keyword of a pragma whose body is lexed as ordinary tokens, and the
+-- length of the opening up to and including the keyword.
+openPragmaKeyword :: Text -> Maybe (Text, Int)
+openPragmaKeyword rawBody =
+  let leading = T.takeWhile isSpace rawBody
+      keyword = T.takeWhile (not . isSpace) (T.drop (T.length leading) rawBody)
+      upper = T.toUpper keyword
+   in if upper `elem` openPragmaKeywords
+        then Just (upper, 3 + T.length leading + T.length keyword)
+        else Nothing
+
+-- | The pragmas that 'tryParsePragma' opens rather than lexes as one token.
+openPragmaKeywords :: [Text]
+openPragmaKeywords = ["RULES"]
+
+-- | The @#-}@ that closes a pragma opened by 'tryParsePragma'.
+tryParsePragmaClose :: LexerState -> Maybe (LexToken, LexerState)
+tryParsePragmaClose st
+  | lexerInPragma st,
+    "#-}" `T.isPrefixOf` lexerInput st =
+      let st' = (advanceN 3 st) {lexerInPragma = False}
+       in Just (mkToken st st' "#-}" TkPragmaClose, st')
+  | otherwise = Nothing
 
 -- | Extract the raw body text between "{-#" and "#-}".
 -- Returns (body_text, total_consumed_length) where total includes "{-#" and "#-}".

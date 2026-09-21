@@ -236,6 +236,38 @@ docDecl decl =
     DeclTypeFamilyInst tfi -> "DeclTypeFamilyInst" <+> parens (docTypeFamilyInst tfi)
     DeclDataFamilyInst dfi -> "DeclDataFamilyInst" <+> parens (docDataFamilyInst dfi)
     DeclPragma pragma -> "DeclPragma" <+> docPragma pragma
+    DeclRules rules -> "DeclRules" <+> brackets (hsep (punctuate comma (map docRuleDecl rules)))
+
+docRuleDecl :: RuleDecl -> Doc ann
+docRuleDecl rule =
+  "RuleDecl" <+> braces (hsep (punctuate comma fields))
+  where
+    fields =
+      [docText (ruleName rule)]
+        <> optionalField docRuleActivation (ruleActivation rule)
+        <> listField docTyVarBinder (ruleTypeBinders rule)
+        <> listField docRuleBinder (ruleBinders rule)
+        <> [docExpr (ruleLhs rule), docExpr (ruleRhs rule)]
+
+docRuleActivation :: RuleActivation -> Doc ann
+docRuleActivation activation =
+  case activation of
+    RuleActiveAfter phase -> "RuleActiveAfter" <+> pretty phase
+    RuleActiveBefore phase -> "RuleActiveBefore" <+> pretty phase
+    RuleNeverActive -> "RuleNeverActive"
+
+docRuleBinder :: RuleBinder -> Doc ann
+docRuleBinder binder =
+  "RuleBinder"
+    <+> braces
+      ( hsep
+          ( punctuate
+              comma
+              ( [docUnqualifiedNameText (ruleBinderName binder)]
+                  <> optionalField (\ty -> "Just" <+> parens (docType ty)) (ruleBinderType binder)
+              )
+          )
+      )
 
 docValueDecl :: ValueDecl -> Doc ann
 docValueDecl vdecl =
@@ -1112,6 +1144,8 @@ docTokenKind kind =
     TkPrefixTilde -> "TkPrefixTilde"
     TkRecordDot -> "TkRecordDot"
     TkPragma pragma' -> "TkPragma" <+> docPragmaType (pragmaType pragma')
+    TkPragmaOpen keyword -> "TkPragmaOpen" <+> docText keyword
+    TkPragmaClose -> "TkPragmaClose"
     TkQuasiQuote quoter body -> "TkQuasiQuote" <+> docText quoter <+> docText body
     TkLineComment -> "TkLineComment"
     TkBlockComment -> "TkBlockComment"

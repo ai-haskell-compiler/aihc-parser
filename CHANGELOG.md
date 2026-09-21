@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `RULES` pragmas are parsed. A `{-# RULES ... #-}` pragma at the top level
+  is a `DeclRules` declaration that holds one `RuleDecl` per rule: the name,
+  the phase control (`[n]`, `[~n]` or `[~]`), the type variables of a leading
+  `forall` that a second `forall` follows, the pattern variables with their
+  optional types, and the two sides as expressions. The lexer opens the
+  pragma with a `TkPragmaOpen "RULES"` token and closes it with
+  `TkPragmaClose`, and lexes the rules between them as ordinary tokens, so
+  the rules take part in layout the way GHC reads them: a rule that starts
+  in the column of the enclosing declarations begins a new rule. Before, a
+  `RULES` pragma was a `DeclPragma` with a `PragmaUnknown` body.
+
 ## [4.0.0.0] - 2026-09-17
 
 ### Fixed

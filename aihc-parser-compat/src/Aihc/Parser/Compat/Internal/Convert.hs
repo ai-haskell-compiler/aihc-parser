@@ -56,6 +56,40 @@ toGhcHsDecl decl =
     A.DeclTypeFamilyInst tfi -> InstD noExtField (TyFamInstD noExtField (typeFamilyInstDecl tfi))
     A.DeclDataFamilyInst dfi -> InstD noExtField (DataFamInstD noExtField (dataFamilyInstDecl dfi))
     A.DeclPragma pragma -> SigD noExtField (pragmaSig pragma)
+    A.DeclRules rules -> RuleD noExtField (HsRules (noAnn, NoSourceText) (map (lA . ruleDecl) rules))
+
+ruleDecl :: A.RuleDecl -> RuleDecl GhcPs
+ruleDecl rule =
+  HsRule
+    { rd_ext = (noAnn, NoSourceText),
+      rd_name = lA (mkFastString (T.unpack (A.ruleName rule))),
+      rd_act = ruleActivation (A.ruleActivation rule),
+      rd_bndrs =
+        RuleBndrs
+          { rb_ext = noAnn,
+            rb_tyvs =
+              case A.ruleTypeBinders rule of
+                [] -> Nothing
+                binders -> Just (map (toTyVarBndr ()) binders),
+            rb_tmvs = map (lA . ruleBndr) (A.ruleBinders rule)
+          },
+      rd_lhs = toGhcLHsExpr (A.ruleLhs rule),
+      rd_rhs = toGhcLHsExpr (A.ruleRhs rule)
+    }
+  where
+    ruleBndr binder =
+      let name = lA (toRdrName (A.qualifyName Nothing (A.ruleBinderName binder)))
+       in case A.ruleBinderType binder of
+            Nothing -> RuleBndr noAnn name
+            Just ty -> RuleBndrSig noAnn name (HsPS noAnn (toLHsType ty))
+
+ruleActivation :: Maybe A.RuleActivation -> Activation
+ruleActivation activation =
+  case activation of
+    Nothing -> AlwaysActive
+    Just (A.RuleActiveAfter phase) -> ActiveAfter NoSourceText phase
+    Just (A.RuleActiveBefore phase) -> ActiveBefore NoSourceText phase
+    Just A.RuleNeverActive -> NeverActive
 
 toGhcLHsDecl :: A.Decl -> LHsDecl GhcPs
 toGhcLHsDecl = lA . toGhcHsDecl

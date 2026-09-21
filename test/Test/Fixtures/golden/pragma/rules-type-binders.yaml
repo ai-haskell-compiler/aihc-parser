@@ -1,0 +1,7 @@
+extensions: [TypeApplications]
+input: |
+  {-# RULES "id" forall a. forall (x :: a). id @a x = x; "never" [~] forall. f = g #-}
+  {-# RULES #-}
+ast: |-
+  Module {[DeclRules [RuleDecl {"id", [TyVarBinder {"a"}], [RuleBinder {"x", Just (TVar "a")}], EApp (ETypeApp (EVar "id") (TVar "a")) (EVar "x"), EVar "x"}, RuleDecl {"never", RuleNeverActive, EVar "f", EVar "g"}], DeclRules []]}
+status: pass

@@ -52,7 +52,7 @@ import Aihc.Parser.Lex.Numbers
     lexIntBase,
     withOptionalMagicHashSuffix,
   )
-import Aihc.Parser.Lex.Pragmas (tryParsePragma)
+import Aihc.Parser.Lex.Pragmas (tryParsePragma, tryParsePragmaClose)
 import Aihc.Parser.Lex.Quoted
   ( decodeStringBody,
     processMultilineString,
@@ -231,6 +231,7 @@ nextTokenGeneral env st =
   -- (<|>) for Maybe short-circuits on the first Just without allocating.
   fromMaybe (lexErrorToken st "unexpected character") $
     lexPragma st
+      <|> tryParsePragmaClose st
       <|> lexTHQuoteBracket env st
       <|> lexQuasiQuote st
       <|> lexHexFloat env st
@@ -519,6 +520,8 @@ prevTokenAllowsTightPrefix kind =
     TkReservedBackslash -> True
     TkTypeApp -> True
     TkPragma _ -> True
+    TkPragmaOpen _ -> True
+    TkPragmaClose -> True
     _ -> False
 
 -- | Returns True for tokens after which a '.' can begin a record field access
