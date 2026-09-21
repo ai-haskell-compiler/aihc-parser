@@ -68,7 +68,7 @@
 | PatternSynonyms           |   🟢    | 34/34         |
 | PolyKinds                 |   🟢    | 14/14         |
 | QualifiedDo               |   🟢    | 4/4           |
-| QuantifiedConstraints     |   🟢    | 2/2           |
+| QuantifiedConstraints     |   🟢    | 6/6           |
 | QuasiQuotes               |   🟢    | 11/11         |
 | RankNTypes                |   🟢    | 5/5           |
 | RecordWildCards           |   🟢    | 10/10         |
