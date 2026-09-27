@@ -76,7 +76,7 @@
 | RequiredTypeArguments     |   🟢    | 4/4           |
 | RoleAnnotations           |   🟢    | 7/7           |
 | Safe                      |   🟢    | 2/2           |
-| ScopedTypeVariables       |   🟢    | 18/18         |
+| ScopedTypeVariables       |   🟢    | 19/19         |
 | StandaloneDeriving        |   🟢    | 18/18         |
 | StandaloneKindSignatures  |   🟢    | 12/12         |
 | StarIsType                |   🟢    | 4/4           |
@@ -85,7 +85,7 @@
 | TransformListComp         |   🟢    | 18/18         |
 | TupleSections             |   🟢    | 4/4           |
 | TypeAbstractions          |   🟢    | 5/5           |
-| TypeApplications          |   🟢    | 14/14         |
+| TypeApplications          |   🟢    | 15/15         |
 | TypeData                  |   🟢    | 1/1           |
 | TypeFamilies              |   🟢    | 61/61         |
 | TypeFamilyDependencies    |   🟢    | 4/4           |
