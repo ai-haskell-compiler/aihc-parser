@@ -156,27 +156,27 @@ nonAsApatParser = do
     _ -> varOrConPatternParser
 
 typeBinderPatternParser :: TokParser Pattern
-typeBinderPatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
+typeBinderPatternParser = withSpanAnn (PAnn . mkSpanAnnotation) $ do
   expectedTok TkTypeApp
   PTypeBinder <$> visibleTypeBinderCoreParser
 
 explicitTypePatternParser :: TokParser Pattern
-explicitTypePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
+explicitTypePatternParser = withSpanAnn (PAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordType
   PTypeSyntax TypeSyntaxExplicitNamespace <$> typeParser
 
 strictPatternParser :: TokParser Pattern
-strictPatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
+strictPatternParser = withSpanAnn (PAnn . mkSpanAnnotation) $ do
   expectedTok TkPrefixBang
   PStrict <$> apatParser
 
 irrefutablePatternParser :: TokParser Pattern
-irrefutablePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
+irrefutablePatternParser = withSpanAnn (PAnn . mkSpanAnnotation) $ do
   expectedTok TkPrefixTilde
   PIrrefutable <$> apatParser
 
 negativeLiteralPatternParser :: TokParser Pattern
-negativeLiteralPatternParser = MP.try $ withSpanAnn (PAnn . mkAnnotation) $ do
+negativeLiteralPatternParser = MP.try $ withSpanAnn (PAnn . mkSpanAnnotation) $ do
   expectedTok (TkVarSym "-")
   PNegLit <$> numericLiteralParser
 
@@ -189,21 +189,21 @@ wildcardPatternParser :: TokParser Pattern
 wildcardPatternParser =
   tokenSatisfy "wildcard" $ \tok ->
     case lexTokenKind tok of
-      TkKeywordUnderscore -> Just (PAnn (mkAnnotation (lexTokenSpan tok)) PWildcard)
+      TkKeywordUnderscore -> Just (PAnn (mkSpanAnnotation (lexTokenSpan tok)) PWildcard)
       _ -> Nothing
 
 literalPatternParser :: TokParser Pattern
 literalPatternParser =
   tokenSatisfy "literal" $ \tok -> do
     lit <- literalFromToken tok
-    let ann = mkAnnotation (lexTokenSpan tok)
+    let ann = mkSpanAnnotation (lexTokenSpan tok)
     pure (PAnn ann (PLit (LitAnn ann lit)))
 
 quasiQuotePatternParser :: TokParser Pattern
 quasiQuotePatternParser =
   tokenSatisfy "quasi quote" $ \tok ->
     case lexTokenKind tok of
-      TkQuasiQuote quoter body -> Just (PAnn (mkAnnotation (lexTokenSpan tok)) (PQuasiQuote quoter body))
+      TkQuasiQuote quoter body -> Just (PAnn (mkSpanAnnotation (lexTokenSpan tok)) (PQuasiQuote quoter body))
       _ -> Nothing
 
 literalParser :: TokParser Literal
@@ -212,7 +212,7 @@ literalParser = intLiteralParser <|> floatLiteralParser <|> charLiteralParser <|
 tokenLiteralParser :: String -> (LexToken -> Maybe Literal) -> TokParser Literal
 tokenLiteralParser expected matchToken =
   tokenSatisfy expected $ \tok ->
-    LitAnn (mkAnnotation (lexTokenSpan tok)) <$> matchToken tok
+    LitAnn (mkSpanAnnotation (lexTokenSpan tok)) <$> matchToken tok
 
 literalFromToken :: LexToken -> Maybe Literal
 literalFromToken tok =
@@ -265,7 +265,7 @@ stringLiteralFromToken tok =
 
 -- | Parse Template Haskell pattern splice: $pat or $(pat)
 thSplicePatternParser :: TokParser Pattern
-thSplicePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
+thSplicePatternParser = withSpanAnn (PAnn . mkSpanAnnotation) $ do
   expectedTok TkTHSplice
   tok <- peekToken
   case lexTokenKind tok of
@@ -277,7 +277,7 @@ visibleTypeBinderCoreParser =
   withSpan $
     ( do
         ident <- tyVarNameParser
-        pure (\span' -> TyVarBinder [mkAnnotation span'] ident Nothing TyVarBSpecified TyVarBInvisible)
+        pure (\span' -> TyVarBinder [mkSpanAnnotation span'] ident Nothing TyVarBSpecified TyVarBInvisible)
     )
       <|> ( do
               expectedTok TkSpecialLParen
@@ -285,14 +285,14 @@ visibleTypeBinderCoreParser =
               expectedTok TkReservedDoubleColon
               kind <- typeParser
               expectedTok TkSpecialRParen
-              pure (\span' -> TyVarBinder [mkAnnotation span'] ident (Just kind) TyVarBSpecified TyVarBInvisible)
+              pure (\span' -> TyVarBinder [mkSpanAnnotation span'] ident (Just kind) TyVarBSpecified TyVarBInvisible)
           )
 
 varOrConPatternParser :: TokParser Pattern
 varOrConPatternParser = do
   (tok, name) <- identifierNameWithTokenParser
   mNextTok <- peekTokenMaybe
-  let ann = mkAnnotation (lexTokenSpan tok)
+  let ann = mkSpanAnnotation (lexTokenSpan tok)
   case mNextTok of
     Just nextTok
       | isConLikeName name && lexTokenKind nextTok == TkSpecialLBrace -> do
@@ -300,7 +300,7 @@ varOrConPatternParser = do
           endInput <- MP.getInput
           let startSpan = lexTokenSpan tok
               recordSpan = maybe startSpan (mergeSourceSpans startSpan . lexTokenSpan) (tokStreamPrevToken endInput)
-          pure (PAnn (mkAnnotation recordSpan) (PRecord name fields hasWildcard))
+          pure (PAnn (mkSpanAnnotation recordSpan) (PRecord name fields hasWildcard))
     _ ->
       pure $
         PAnn ann $
@@ -326,7 +326,7 @@ recordPatternFieldListParser =
   recordFieldsWithWildcardsParser (recordFieldPatternParser `MP.sepEndBy` expectedTok TkSpecialComma)
 
 listPatternParser :: TokParser Pattern
-listPatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
+listPatternParser = withSpanAnn (PAnn . mkSpanAnnotation) $ do
   expectedTok TkSpecialLBracket
   elems <- listPatternElementParser `MP.sepBy` expectedTok TkSpecialComma
   expectedTok TkSpecialRBracket
@@ -370,7 +370,7 @@ subpatternWithBareViewParser = do
     Nothing -> patternParser
 
 parenOrTuplePatternParser :: TokParser Pattern
-parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
+parenOrTuplePatternParser = withSpanAnn (PAnn . mkSpanAnnotation) $ do
   (tupleFlavor, closeTok) <- tupleDelimsParser
   mNextTok <- peekTokenMaybe
   case fmap lexTokenKind mNextTok of
@@ -498,7 +498,7 @@ parenOrTuplePatternParser = withSpanAnn (PAnn . mkAnnotation) $ do
         operatorPatternParser :: TokParser Pattern
         operatorPatternParser = do
           tok' <- anySingle
-          let ann = mkAnnotation (lexTokenSpan tok')
+          let ann = mkSpanAnnotation (lexTokenSpan tok')
           case lexTokenKind tok' of
             TkVarSym op -> pure (PAnn ann (PVar (mkUnqualifiedNameAt tok' NameVarSym op)))
             TkConSym op -> pure (PAnn ann (PCon (mkNameAt tok' Nothing NameConSym op) [] []))

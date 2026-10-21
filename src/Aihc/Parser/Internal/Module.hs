@@ -23,7 +23,7 @@ import Aihc.Parser.Internal.Common
 import Aihc.Parser.Internal.Decl (declParser)
 import Aihc.Parser.Internal.Import (importDeclParser, languagePragmaParser, moduleHeaderParser)
 import Aihc.Parser.Lex (LexTokenKind (..), lexTokenKind)
-import Aihc.Parser.Syntax (Decl, ImportDecl, Module (..), mkAnnotation)
+import Aihc.Parser.Syntax (Decl, ImportDecl, Module (..), mkSpanAnnotation)
 import Control.Monad (void)
 import Text.Megaparsec qualified as MP
 
@@ -55,7 +55,7 @@ moduleParser = do
   let moduleSpan = consumedSpan inputStart startInput startOffset (MP.stateInput finalState) (MP.stateOffset finalState)
   pure
     Module
-      { moduleAnns = [mkAnnotation moduleSpan],
+      { moduleAnns = [mkSpanAnnotation moduleSpan],
         moduleHead = mHeader,
         moduleLanguagePragmas = concat languagePragmas,
         moduleImports = imports,

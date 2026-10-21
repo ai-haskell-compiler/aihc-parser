@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `mkSpanAnnotation :: SourceSpan -> Annotation` makes a span annotation
+  without the run-time type test of `mkAnnotation`.
+
+### Performance
+
+- The parser uses `mkSpanAnnotation` for all its span annotations. Before,
+  each annotation was a thunk that kept its whole token alive until something
+  forced it. On the aihc-base benchmark, the peak heap is 15% smaller and GC
+  copies 5% fewer bytes.
+
 ## [5.0.0.0] - 2026-09-30
 
 ### Added

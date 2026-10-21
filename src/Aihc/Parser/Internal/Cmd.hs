@@ -90,13 +90,13 @@ cmdArrTailParser = do
 
 -- | Parse a command do-block: @do { cstmt ; ... }@
 cmdDoParser :: TokParser Cmd
-cmdDoParser = withSpanAnn (CmdAnn . mkAnnotation) $ do
+cmdDoParser = withSpanAnn (CmdAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordDo
   CmdDo <$> bracedSemiSep1 cmdStmtParser
 
 -- | Parse a command if-then-else: @if exp then cmd else cmd@
 cmdIfParser :: TokParser Cmd
-cmdIfParser = withSpanAnn (CmdAnn . mkAnnotation) $ do
+cmdIfParser = withSpanAnn (CmdAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordIf
   cond <- exprParser
   skipSemicolons
@@ -108,7 +108,7 @@ cmdIfParser = withSpanAnn (CmdAnn . mkAnnotation) $ do
 
 -- | Parse a command case: @case exp of { calts }@
 cmdCaseParser :: TokParser Cmd
-cmdCaseParser = withSpanAnn (CmdAnn . mkAnnotation) $ do
+cmdCaseParser = withSpanAnn (CmdAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordCase
   scrut <- region "while parsing case scrutinee" exprParser
   expectedTok TkKeywordOf
@@ -119,18 +119,18 @@ cmdCaseAltParser :: TokParser (CaseAlt Cmd)
 cmdCaseAltParser = withSpan $ do
   pat <- caseAltPatternParser
   rhs <- caseRhsParserWithBodyParser cmdParser
-  pure (\span' -> CaseAlt [mkAnnotation span'] pat rhs)
+  pure (\span' -> CaseAlt [mkSpanAnnotation span'] pat rhs)
 
 -- | Parse a command let: @let decls in cmd@
 cmdLetParser :: TokParser Cmd
-cmdLetParser = withSpanAnn (CmdAnn . mkAnnotation) $ do
+cmdLetParser = withSpanAnn (CmdAnn . mkSpanAnnotation) $ do
   decls <- parseLetDeclsParser
   expectedTok TkKeywordIn
   CmdLet decls <$> cmdParser
 
 -- | Parse a command lambda: @\\pats -> cmd@
 cmdLamParser :: TokParser Cmd
-cmdLamParser = withSpanAnn (CmdAnn . mkAnnotation) $ do
+cmdLamParser = withSpanAnn (CmdAnn . mkSpanAnnotation) $ do
   expectedTok TkReservedBackslash
   pats <- MP.some apatParser
   expectedTok TkReservedRightArrow
@@ -139,7 +139,7 @@ cmdLamParser = withSpanAnn (CmdAnn . mkAnnotation) $ do
 -- | Parse a parenthesised command: @( cmd )@
 cmdParenParser :: TokParser Cmd
 cmdParenParser =
-  withSpanAnn (CmdAnn . mkAnnotation) $
+  withSpanAnn (CmdAnn . mkSpanAnnotation) $
     CmdPar <$> parens cmdParser
 
 -- | Parse a do-statement in command context (arrow do).
@@ -171,7 +171,7 @@ startsWithPatternBind =
 -- | Parse a command do-statement: @cmd@ or @pat <- cmd@.
 -- Uses the expression-first approach: parse as expression, check for @<-@.
 cmdBindOrBodyStmtParser :: TokParser (DoStmt Cmd)
-cmdBindOrBodyStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
+cmdBindOrBodyStmtParser = withSpanAnn (DoAnn . mkSpanAnnotation) $ do
   -- Arrow tails (-<, -<<) belong to the command level, not the expression.
   expr <- exprParser
   hasArrow <- optionalTok TkReservedLeftArrow
@@ -195,7 +195,7 @@ cmdBindOrBodyStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
 -- | Parse a command bind statement where the pattern is unambiguously a
 -- pattern (starts with !, ~, or x@).
 cmdBindStmtParser :: TokParser (DoStmt Cmd)
-cmdBindStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
+cmdBindStmtParser = withSpanAnn (DoAnn . mkSpanAnnotation) $ do
   pat <- patternParser
   expectedTok TkReservedLeftArrow
   cmd <- region "while parsing '<-' binding" cmdParser
@@ -204,17 +204,17 @@ cmdBindStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
 -- | Parse a body-only command statement (fallback from cmdStmtParser).
 cmdBodyStmtParser :: TokParser (DoStmt Cmd)
 cmdBodyStmtParser =
-  withSpanAnn (DoAnn . mkAnnotation) $
+  withSpanAnn (DoAnn . mkSpanAnnotation) $
     DoExpr <$> cmdParser
 
 -- | Parse a command let-statement: @let decls@
 cmdLetStmtParser :: TokParser (DoStmt Cmd)
 cmdLetStmtParser =
-  withSpanAnn (DoAnn . mkAnnotation) $
+  withSpanAnn (DoAnn . mkSpanAnnotation) $
     DoLetDecls <$> parseLetDeclsStmtParser
 
 -- | Parse a command rec-statement: @rec { cstmts }@
 cmdRecStmtParser :: TokParser (DoStmt Cmd)
-cmdRecStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
+cmdRecStmtParser = withSpanAnn (DoAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordRec
   DoRecStmt <$> bracedSemiSep1 cmdStmtParser

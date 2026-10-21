@@ -149,7 +149,7 @@ ifExprParser = do
   multiWayIfExprParser <|> classicIfExprParser
 
 classicIfExprParser :: TokParser Expr
-classicIfExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+classicIfExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   cond <- exprParser
   skipSemicolons
   expectedTok TkKeywordThen
@@ -159,7 +159,7 @@ classicIfExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
   EIf cond yes <$> exprParser
 
 multiWayIfExprParser :: TokParser Expr
-multiWayIfExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+multiWayIfExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   EMultiWayIf <$> braces (MP.some multiWayIfAlternative)
 
 multiWayIfAlternative :: TokParser (GuardedRhs Expr)
@@ -170,25 +170,25 @@ multiWayIfAlternative = withSpan $ do
   body <- exprParser
   pure $ \span' ->
     GuardedRhs
-      { guardedRhsAnns = [mkAnnotation span'],
+      { guardedRhsAnns = [mkSpanAnnotation span'],
         guardedRhsGuards = guards,
         guardedRhsBody = body
       }
 
 doExprParser :: TokParser Expr
-doExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+doExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordDo
   stmts <- bracedSemiSep1 doStmtParser
   pure (EDo stmts DoPlain)
 
 mdoExprParser :: TokParser Expr
-mdoExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+mdoExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordMdo
   stmts <- bracedSemiSep1 doStmtParser
   pure (EDo stmts DoMdo)
 
 qualifiedDoExprParser :: TokParser Expr
-qualifiedDoExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+qualifiedDoExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   modName <- tokenSatisfy "qualified do" $ \tok ->
     case lexTokenKind tok of
       TkQualifiedDo m -> Just m
@@ -197,7 +197,7 @@ qualifiedDoExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
   pure (EDo stmts (DoQualified modName))
 
 qualifiedMdoExprParser :: TokParser Expr
-qualifiedMdoExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+qualifiedMdoExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   modName <- tokenSatisfy "qualified mdo" $ \tok ->
     case lexTokenKind tok of
       TkQualifiedMdo m -> Just m
@@ -207,7 +207,7 @@ qualifiedMdoExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
 
 -- | Parse a proc expression: @proc apat -> cmd@
 procExprParser :: TokParser Expr
-procExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+procExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordProc
   pat <- region "while parsing proc pattern" apatParser
   expectedTok TkReservedRightArrow
@@ -224,7 +224,7 @@ doStmtParser = do
 
 doBindOrExprStmtParser :: TokParser (DoStmt Expr)
 doBindOrExprStmtParser =
-  withSpanAnn (DoAnn . mkAnnotation) $
+  withSpanAnn (DoAnn . mkSpanAnnotation) $
     exprOrPatternBindParser exprParser (region "while parsing '<-' binding" exprParser) DoBind DoExpr
 
 parseLetDeclsParser :: TokParser [Decl]
@@ -241,12 +241,12 @@ bracedDeclsMaybeEmpty :: TokParser [Decl]
 bracedDeclsMaybeEmpty = bracedSemiSep localDeclsParser
 
 doLetStmtParser :: TokParser (DoStmt Expr)
-doLetStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
+doLetStmtParser = withSpanAnn (DoAnn . mkSpanAnnotation) $ do
   DoLetDecls <$> parseLetDeclsStmtParser
 
 -- | Parse a @rec@ statement inside a do-block.
 doRecStmtParser :: TokParser (DoStmt Expr)
-doRecStmtParser = withSpanAnn (DoAnn . mkAnnotation) $ do
+doRecStmtParser = withSpanAnn (DoAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordRec
   DoRecStmt <$> bracedSemiSep1 doStmtParser
 
@@ -379,7 +379,7 @@ floatExprParser =
 tokenExprParser :: String -> (LexToken -> Maybe Expr) -> TokParser Expr
 tokenExprParser expected matchToken =
   tokenSatisfy expected $ \tok ->
-    EAnn (mkAnnotation (lexTokenSpan tok)) <$> matchToken tok
+    EAnn (mkSpanAnnotation (lexTokenSpan tok)) <$> matchToken tok
 
 charExprParser :: TokParser Expr
 charExprParser =
@@ -427,7 +427,7 @@ appExprParserWith atomParser = do
       let !endInput = MP.stateInput endState
           !endOffset = MP.stateOffset endState
           appSpan = consumedSpan inputStart startInput startOffset endInput endOffset
-      pure (EAnn (mkAnnotation appSpan) (foldl applyArg first rest))
+      pure (EAnn (mkSpanAnnotation appSpan) (foldl applyArg first rest))
   where
     appArg :: TokParser (Either Type Expr)
     appArg = (Left <$> typeAppArg) <|> (Right <$> appExprArgParser)
@@ -522,7 +522,7 @@ atomOrRecordExprParserWith atomContext = do
     normalizeField (fieldName, mExpr, sp) =
       case mExpr of
         Just expr' -> RecordField fieldName expr' False
-        Nothing -> RecordField fieldName (EAnn (mkAnnotation sp) (EVar fieldName)) True
+        Nothing -> RecordField fieldName (EAnn (mkSpanAnnotation sp) (EVar fieldName)) True
 
     recordDotMayFollow :: Expr -> Bool
     recordDotMayFollow expr =
@@ -668,17 +668,17 @@ simpleAtomExprParserWith atomContext = do
       if thAny then parser else varExprParser
 
 explicitTypeExprParser :: TokParser Expr
-explicitTypeExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+explicitTypeExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordType
   ETypeSyntax TypeSyntaxExplicitNamespace <$> typeParser
 
 prefixNegateAtomExprParserWith :: AtomContext -> TokParser Expr
-prefixNegateAtomExprParserWith atomContext = withSpanAnn (EAnn . mkAnnotation) $ do
+prefixNegateAtomExprParserWith atomContext = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   prefixMinusTokenParser
   ENegate <$> atomExprParserWith atomContext
 
 negateExprParser :: TokParser Expr
-negateExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+negateExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   _ <- minusTokenValueParser
   ENegate <$> negateOperandParser
 
@@ -722,7 +722,7 @@ startsParenOperator kind =
 
 parenOperatorExprParser :: TokParser Expr
 parenOperatorExprParser =
-  withSpanAnn (EAnn . mkAnnotation) $
+  withSpanAnn (EAnn . mkSpanAnnotation) $
     EVar <$> parens operatorExprNameParser
 
 -- | Parse the operator inside a parenthesized operator expression such as
@@ -794,7 +794,7 @@ unguardedRhsParserWithBodyParser arrowKind bodyParser = withSpan $ do
   rhsArrowTok arrowKind
   body <- region (rhsContextText arrowKind) bodyParser
   whereDecls <- MP.optional whereClauseParser
-  pure (\span' -> UnguardedRhs [mkAnnotation span'] body whereDecls)
+  pure (\span' -> UnguardedRhs [mkSpanAnnotation span'] body whereDecls)
 
 rhsContextText :: RhsArrowKind -> Text
 rhsContextText RhsArrowCase = "while parsing case alternative right-hand side"
@@ -804,7 +804,7 @@ guardedRhssParserWithBodyParser :: RhsArrowKind -> TokParser body -> TokParser (
 guardedRhssParserWithBodyParser arrowKind bodyParser = withSpan $ do
   grhss <- MP.some (guardedRhsParserWithBodyParser arrowKind bodyParser)
   whereDecls <- MP.optional whereClauseParser
-  pure (\span' -> GuardedRhss [mkAnnotation span'] grhss whereDecls)
+  pure (\span' -> GuardedRhss [mkSpanAnnotation span'] grhss whereDecls)
 
 guardedRhsParserWithBodyParser :: RhsArrowKind -> TokParser body -> TokParser (GuardedRhs body)
 guardedRhsParserWithBodyParser arrowKind bodyParser = withSpan $ do
@@ -814,7 +814,7 @@ guardedRhsParserWithBodyParser arrowKind bodyParser = withSpan $ do
   body <- bodyParser
   pure $ \span' ->
     GuardedRhs
-      { guardedRhsAnns = [mkAnnotation span'],
+      { guardedRhsAnns = [mkSpanAnnotation span'],
         guardedRhsGuards = guards,
         guardedRhsBody = body
       }
@@ -835,7 +835,7 @@ guardQualifierParser arrowKind = do
 -- | Parse a guard expression or pattern bind.
 guardBindOrExprParser :: RhsArrowKind -> TokParser GuardQualifier
 guardBindOrExprParser arrowKind =
-  withSpanAnn (GuardAnn . mkAnnotation) $
+  withSpanAnn (GuardAnn . mkSpanAnnotation) $
     exprOrPatternBindParser
       (guardExprParser arrowKind)
       exprParser
@@ -843,7 +843,7 @@ guardBindOrExprParser arrowKind =
       GuardExpr
 
 guardLetParser :: TokParser GuardQualifier
-guardLetParser = withSpanAnn (GuardAnn . mkAnnotation) $ do
+guardLetParser = withSpanAnn (GuardAnn . mkSpanAnnotation) $ do
   GuardLet <$> parseLetDeclsStmtParser
 
 -- | Parse a guard expression.  Equation guards allow a bare top-level type
@@ -860,7 +860,7 @@ caseAltParser = withSpan $ do
   rhs <- region "while parsing case alternative" rhsParser
   pure $ \span' ->
     CaseAlt
-      { caseAltAnns = [mkAnnotation span'],
+      { caseAltAnns = [mkSpanAnnotation span'],
         caseAltPattern = pat,
         caseAltRhs = rhs
       }
@@ -871,13 +871,13 @@ lambdaCaseAltParser = withSpan $ do
   rhs <- region "while parsing lambda-cases alternative" rhsParser
   pure $ \span' ->
     LambdaCaseAlt
-      { lambdaCaseAltAnns = [mkAnnotation span'],
+      { lambdaCaseAltAnns = [mkSpanAnnotation span'],
         lambdaCaseAltPats = pats,
         lambdaCaseAltRhs = rhs
       }
 
 caseExprParser :: TokParser Expr
-caseExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+caseExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordCase
   scrutinee <- region "while parsing case expression" exprParser
   expectedTok TkKeywordOf
@@ -886,7 +886,7 @@ caseExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
     bracedAlts = bracedSemiSep caseAltParser
 
 parenExprParser :: TokParser Expr
-parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+parenExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   (tupleFlavor, closeTok) <- tupleDelimsParser
   closedImmediately <- optionalTok closeTok
   if closedImmediately
@@ -1073,7 +1073,7 @@ parenExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
       pure (EUnboxedSum altIdx arity inner)
 
 listExprParser :: TokParser Expr
-listExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+listExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkSpecialLBracket
   closedImmediately <- optionalTok TkSpecialRBracket
   if closedImmediately
@@ -1141,7 +1141,7 @@ compStmtParser = do
 -- @then group by e using f@, or @then group using f@.
 -- Only attempted when the 'TransformListComp' extension is enabled.
 compTransformStmtParser :: TokParser CompStmt
-compTransformStmtParser = MP.try $ withSpanAnn (CompAnn . mkAnnotation) $ do
+compTransformStmtParser = MP.try $ withSpanAnn (CompAnn . mkSpanAnnotation) $ do
   enabled <- isExtensionEnabled TransformListComp
   guard enabled
   expectedTok TkKeywordThen
@@ -1206,7 +1206,7 @@ compTransformLexpParser =
     <|> compTransformAppExprParser
 
 compTransformLambdaExprParser :: TokParser Expr
-compTransformLambdaExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+compTransformLambdaExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkReservedBackslash
   lambdaCaseParser <|> lambdaCasesParser <|> lambdaPatsParser
   where
@@ -1232,7 +1232,7 @@ compTransformCaseAltParser = withSpan $ do
   rhs <- region "while parsing case alternative" (caseRhsParserWithBodyParser compTransformExprParser)
   pure $ \span' ->
     CaseAlt
-      { caseAltAnns = [mkAnnotation span'],
+      { caseAltAnns = [mkSpanAnnotation span'],
         caseAltPattern = pat,
         caseAltRhs = rhs
       }
@@ -1243,7 +1243,7 @@ compTransformLambdaCaseAltParser = withSpan $ do
   rhs <- region "while parsing lambda-cases alternative" (caseRhsParserWithBodyParser compTransformExprParser)
   pure $ \span' ->
     LambdaCaseAlt
-      { lambdaCaseAltAnns = [mkAnnotation span'],
+      { lambdaCaseAltAnns = [mkSpanAnnotation span'],
         lambdaCaseAltPats = pats,
         lambdaCaseAltRhs = rhs
       }
@@ -1252,7 +1252,7 @@ compTransformAppExprParser :: TokParser Expr
 compTransformAppExprParser = appExprParserWith compTransformAtomOrRecordExprParser
 
 compTransformNegateExprParser :: TokParser Expr
-compTransformNegateExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+compTransformNegateExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   _ <- minusTokenValueParser
   ENegate <$> compTransformNegateOperandParser
 
@@ -1271,18 +1271,18 @@ compTransformAtomOrRecordExprParser = do
 
 compGenOrGuardParser :: TokParser CompStmt
 compGenOrGuardParser =
-  withSpanAnn (CompAnn . mkAnnotation) $
+  withSpanAnn (CompAnn . mkSpanAnnotation) $
     exprOrPatternBindParser exprParser (region "while parsing '<-' generator" exprParser) CompGen CompGuard
 
 compLetStmtParser :: TokParser CompStmt
-compLetStmtParser = withSpanAnn (CompAnn . mkAnnotation) $ do
+compLetStmtParser = withSpanAnn (CompAnn . mkSpanAnnotation) $ do
   CompLetDecls <$> parseLetDeclsStmtParser
 
 -- | Report core:
 --
 -- > lexp -> '\\' apat_1 ... apat_n '->' exp
 lambdaExprParser :: TokParser Expr
-lambdaExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+lambdaExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkReservedBackslash
   lambdaCaseParser <|> lambdaCasesParser <|> lambdaPatsParser
   where
@@ -1309,7 +1309,7 @@ lambdaExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
 --
 -- > lexp -> 'let' decls 'in' exp
 letExprParser :: TokParser Expr
-letExprParser = withSpanAnn (EAnn . mkAnnotation) $ do
+letExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   decls <- parseLetDeclsParser
   expectedTok TkKeywordIn
   ELetDecls decls <$> exprParser
@@ -1335,7 +1335,7 @@ localDeclsParser = do
 
 localTypeSigDeclsParser :: TokParser Decl
 localTypeSigDeclsParser =
-  withSpanAnn (DeclAnn . mkAnnotation) $
+  withSpanAnn (DeclAnn . mkSpanAnnotation) $
     typedBindingOrSignatureParser
       typeParser
       DeclTypeSig
@@ -1347,7 +1347,7 @@ localTypeSigDeclsParser =
       "local typed bindings with '=' or guards require exactly one binder"
 
 localFunctionDeclParser :: TokParser Decl
-localFunctionDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
+localFunctionDeclParser = withSpanAnn (DeclAnn . mkSpanAnnotation) $ do
   -- Only the head can require a retry as a pattern binding. A failed body
   -- must not cause the same nested declarations to be parsed again.
   (headForm, name, pats) <- MP.try $ do
@@ -1357,7 +1357,7 @@ localFunctionDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
   functionBindDecl headForm name pats <$> equationRhsParser
 
 localPatternDeclParser :: TokParser Decl
-localPatternDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
+localPatternDeclParser = withSpanAnn (DeclAnn . mkSpanAnnotation) $ do
   linearEnabled <- isExtensionEnabled LinearTypes
   multTag <-
     if linearEnabled
@@ -1375,7 +1375,7 @@ localMultiplicityTagParser = do
     _ -> ExplicitMultiplicityTag <$> typeAtomParser
 
 implicitParamDeclParser :: TokParser Decl
-implicitParamDeclParser = withSpanAnn (DeclAnn . mkAnnotation) $ do
+implicitParamDeclParser = withSpanAnn (DeclAnn . mkSpanAnnotation) $ do
   name <- implicitParamNameParser
   expectedTok TkReservedEquals
   rhsExpr <- exprParser
@@ -1386,7 +1386,7 @@ varExprParser :: TokParser Expr
 varExprParser =
   tokenSatisfy "identifier" $ \tok ->
     case identifierName tok of
-      Just name -> Just (EAnn (mkAnnotation (lexTokenSpan tok)) (EVar name))
+      Just name -> Just (EAnn (mkSpanAnnotation (lexTokenSpan tok)) (EVar name))
       Nothing -> Nothing
 
 implicitParamExprParser :: TokParser Expr
@@ -1396,7 +1396,7 @@ implicitParamExprParser =
       TkImplicitParam name ->
         Just $
           EAnn
-            (mkAnnotation (lexTokenSpan tok))
+            (mkSpanAnnotation (lexTokenSpan tok))
             (EImplicitParam name)
       _ -> Nothing
 
@@ -1407,7 +1407,7 @@ wildcardExprParser =
       TkKeywordUnderscore ->
         Just $
           EAnn
-            (mkAnnotation (lexTokenSpan tok))
+            (mkSpanAnnotation (lexTokenSpan tok))
             (EVar (mkNameAt tok Nothing NameVarId "_"))
       _ -> Nothing
 
@@ -1421,27 +1421,27 @@ thQuoteExprParser =
     <|> thPatQuoteParser
 
 thExpQuoteParser :: TokParser Expr
-thExpQuoteParser = thQuoteParser (EAnn . mkAnnotation) TkTHExpQuoteOpen TkTHExpQuoteClose exprParser ETHExpQuote
+thExpQuoteParser = thQuoteParser (EAnn . mkSpanAnnotation) TkTHExpQuoteOpen TkTHExpQuoteClose exprParser ETHExpQuote
 
 thTypedQuoteParser :: TokParser Expr
-thTypedQuoteParser = thQuoteParser (EAnn . mkAnnotation) TkTHTypedQuoteOpen TkTHTypedQuoteClose exprParser ETHTypedQuote
+thTypedQuoteParser = thQuoteParser (EAnn . mkSpanAnnotation) TkTHTypedQuoteOpen TkTHTypedQuoteClose exprParser ETHTypedQuote
 
 thDeclQuoteParser :: TokParser Expr
-thDeclQuoteParser = thQuoteParser (EAnn . mkAnnotation) TkTHDeclQuoteOpen TkTHExpQuoteClose (bracedSemiSep declParser <|> plainSemiSep declParser) ETHDeclQuote
+thDeclQuoteParser = thQuoteParser (EAnn . mkSpanAnnotation) TkTHDeclQuoteOpen TkTHExpQuoteClose (bracedSemiSep declParser <|> plainSemiSep declParser) ETHDeclQuote
 
 thTypeQuoteParser :: TokParser Expr
-thTypeQuoteParser = thQuoteParser (EAnn . mkAnnotation) TkTHTypeQuoteOpen TkTHExpQuoteClose typeParser ETHTypeQuote
+thTypeQuoteParser = thQuoteParser (EAnn . mkSpanAnnotation) TkTHTypeQuoteOpen TkTHExpQuoteClose typeParser ETHTypeQuote
 
 thPatQuoteParser :: TokParser Expr
-thPatQuoteParser = thQuoteParser (EAnn . mkAnnotation) TkTHPatQuoteOpen TkTHExpQuoteClose patParser ETHPatQuote
+thPatQuoteParser = thQuoteParser (EAnn . mkSpanAnnotation) TkTHPatQuoteOpen TkTHExpQuoteClose patParser ETHPatQuote
 
 thUntypedSpliceParser :: TokParser Expr
-thUntypedSpliceParser = withSpanAnn (EAnn . mkAnnotation) $ do
+thUntypedSpliceParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkTHSplice
   ETHSplice <$> compactSpliceBodyParser
 
 thTypedSpliceParser :: TokParser Expr
-thTypedSpliceParser = withSpanAnn (EAnn . mkAnnotation) $ do
+thTypedSpliceParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkTHTypedSplice
   ETHTypedSplice <$> compactSpliceBodyParser
 
@@ -1465,7 +1465,7 @@ thNameQuoteExprParser :: TokParser Expr
 thNameQuoteExprParser = thValueNameQuoteParser <|> thTypeNameQuoteParser
 
 thValueNameQuoteParser :: TokParser Expr
-thValueNameQuoteParser = withSpanAnn (EAnn . mkAnnotation) $ do
+thValueNameQuoteParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkTHQuoteTick
   body <- atomExprParser
   guard (isTHValueNameQuoteBody body)
@@ -1483,7 +1483,7 @@ isTHValueNameQuoteBody expr =
     isTupleConstructorSlot Just {} = False
 
 thTypeNameQuoteParser :: TokParser Expr
-thTypeNameQuoteParser = withSpanAnn (EAnn . mkAnnotation) $ do
+thTypeNameQuoteParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
   expectedTok TkTHTypeQuoteTick
   body <- typeAtomParser
   guard (isTHTypeNameQuoteBody body)
@@ -1502,5 +1502,5 @@ quasiQuoteExprParser :: TokParser Expr
 quasiQuoteExprParser =
   tokenSatisfy "quasi quote" $ \tok ->
     case lexTokenKind tok of
-      TkQuasiQuote quoter body -> Just (EAnn (mkAnnotation (lexTokenSpan tok)) (EQuasiQuote quoter body))
+      TkQuasiQuote quoter body -> Just (EAnn (mkSpanAnnotation (lexTokenSpan tok)) (EQuasiQuote quoter body))
       _ -> Nothing

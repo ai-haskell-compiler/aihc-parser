@@ -37,7 +37,7 @@ moduleHeaderParser = withSpan $ do
   expectedTok TkKeywordWhere
   pure $ \span' ->
     ModuleHead
-      { moduleHeadAnns = [mkAnnotation span'],
+      { moduleHeadAnns = [mkSpanAnnotation span'],
         moduleHeadName = name,
         moduleHeadWarningPragma = mWarning,
         moduleHeadExports = exports
@@ -54,7 +54,7 @@ exportSpecListParser :: TokParser [ExportSpec]
 exportSpecListParser = parens $ exportSpecParser `MP.sepEndBy` expectedTok TkSpecialComma
 
 exportSpecParser :: TokParser ExportSpec
-exportSpecParser = withSpanAnn (ExportAnn . mkAnnotation) $ do
+exportSpecParser = withSpanAnn (ExportAnn . mkSpanAnnotation) $ do
   mWarning <- MP.optional warningPragmaParser
   exportModuleParser mWarning <|> exportNameParser mWarning
 
@@ -168,7 +168,7 @@ importDeclParser = withSpan $ do
   let isQualified = preQualified || isJust postQualified
   pure $ \span' ->
     ImportDecl
-      { importDeclAnns = [mkAnnotation span'],
+      { importDeclAnns = [mkSpanAnnotation span'],
         importDeclLevel = importedLevel,
         importDeclPackage = importedPackage,
         importDeclSourcePragma = importedSource,
@@ -195,13 +195,13 @@ importSpecParser = withSpan $ do
   items <- parens $ importItemParser `MP.sepEndBy` expectedTok TkSpecialComma
   pure $ \span' ->
     ImportSpec
-      { importSpecAnns = [mkAnnotation span'],
+      { importSpecAnns = [mkSpanAnnotation span'],
         importSpecHiding = isHiding,
         importSpecItems = items
       }
 
 importItemParser :: TokParser ImportItem
-importItemParser = withSpanAnn (ImportAnn . mkAnnotation) $ do
+importItemParser = withSpanAnn (ImportAnn . mkSpanAnnotation) $ do
   namespace <- MP.optional exportImportNamespaceParser
   itemName <- identifierUnqualifiedNameParser <|> parens importOperatorParser
   -- When there's no explicit namespace, we still need to try parsing members

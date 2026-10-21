@@ -544,11 +544,11 @@ constructorInfixOperatorNameParser =
 
 mkUnqualifiedNameAt :: LexToken -> NameType -> Text -> UnqualifiedName
 mkUnqualifiedNameAt tok ty txt =
-  UnqualifiedName ty txt [mkAnnotation (lexTokenSpan tok)]
+  UnqualifiedName ty txt [mkSpanAnnotation (lexTokenSpan tok)]
 
 mkNameAt :: LexToken -> Maybe Text -> NameType -> Text -> Name
 mkNameAt tok qualifier ty txt =
-  Name qualifier ty txt [mkAnnotation (lexTokenSpan tok)]
+  Name qualifier ty txt [mkSpanAnnotation (lexTokenSpan tok)]
 
 nameToUnqualified :: Name -> UnqualifiedName
 nameToUnqualified name =
@@ -694,7 +694,7 @@ layoutSemiSep1 parser = do
 
 contextItemParserWith :: TokParser Type -> TokParser Type -> TokParser Type
 contextItemParserWith typeParser typeAtomParser =
-  withSpanAnn (TAnn . mkAnnotation) $
+  withSpanAnn (TAnn . mkSpanAnnotation) $
     MP.try parenthesizedContextItemParser <|> MP.try kindSigContextItemParser <|> bareContextItemParser
   where
     bareContextItemParser =
@@ -1090,7 +1090,7 @@ thAnyEnabled = do
   pure (thEnabled || thFullEnabled)
 
 asPatternParser :: TokParser Pattern -> TokParser Pattern
-asPatternParser bodyParser = withSpanAnn (PAnn . mkAnnotation) $ do
+asPatternParser bodyParser = withSpanAnn (PAnn . mkSpanAnnotation) $ do
   name <- MP.try (binderNameParser <* expectedTok TkReservedAt)
   PAs name <$> bodyParser
 
