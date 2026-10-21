@@ -29,15 +29,15 @@ import Text.Megaparsec qualified as MP
 
 -- | Parse a Template Haskell type splice: $typ or $(typ)
 thSpliceTypeParser :: TokParser Type
-thSpliceTypeParser = withSpanAnn (TAnn . mkAnnotation) $ do
+thSpliceTypeParser = withSpanAnn (TAnn . mkSpanAnnotation) $ do
   expectedTok TkTHSplice
   body <- parenSpliceBody <|> bareSpliceBody
   pure (TSplice body)
   where
-    parenSpliceBody = withSpanAnn (EAnn . mkAnnotation) $ do
+    parenSpliceBody = withSpanAnn (EAnn . mkSpanAnnotation) $ do
       body <- parens exprParser
       pure (EParen body)
-    bareSpliceBody = withSpanAnn (EAnn . mkAnnotation) $ do
+    bareSpliceBody = withSpanAnn (EAnn . mkSpanAnnotation) $ do
       EVar <$> identifierNameParser
 
 -- | Report core plus outer extension forms:
@@ -63,7 +63,7 @@ kindSigTypeParser =
 --
 -- > forall a_1 ... a_n . type
 forallSignatureTypeParser :: TokParser Type
-forallSignatureTypeParser = withSpanAnn (TAnn . mkAnnotation) $ do
+forallSignatureTypeParser = withSpanAnn (TAnn . mkSpanAnnotation) $ do
   telescope <- forallTelescopeParser
   attachForallBody telescope <$> typeSignatureParser
 
@@ -98,7 +98,7 @@ contextOrKindSigTypeParser = do
 --
 -- > forall a_1 ... a_n . type
 forallTypeParser :: TokParser Type
-forallTypeParser = withSpanAnn (TAnn . mkAnnotation) $ do
+forallTypeParser = withSpanAnn (TAnn . mkSpanAnnotation) $ do
   telescope <- forallTelescopeParser
   attachForallBody telescope <$> typeParser
 
@@ -131,7 +131,7 @@ forallBinderParser =
         ident <- tyVarNameParser
         mKind <- optionalTokThen TkReservedDoubleColon typeParser
         expectedTok TkSpecialRBrace
-        pure (\span' -> TyVarBinder [mkAnnotation span'] ident mKind TyVarBInferred TyVarBVisible)
+        pure (\span' -> TyVarBinder [mkSpanAnnotation span'] ident mKind TyVarBInferred TyVarBVisible)
     )
       <|> ( do
               expectedTok TkSpecialLParen
@@ -139,11 +139,11 @@ forallBinderParser =
               expectedTok TkReservedDoubleColon
               kind <- typeParser
               expectedTok TkSpecialRParen
-              pure (\span' -> TyVarBinder [mkAnnotation span'] ident (Just kind) TyVarBSpecified TyVarBVisible)
+              pure (\span' -> TyVarBinder [mkSpanAnnotation span'] ident (Just kind) TyVarBSpecified TyVarBVisible)
           )
       <|> ( do
               ident <- tyVarNameParser
-              pure (\span' -> TyVarBinder [mkAnnotation span'] ident Nothing TyVarBSpecified TyVarBVisible)
+              pure (\span' -> TyVarBinder [mkSpanAnnotation span'] ident Nothing TyVarBSpecified TyVarBVisible)
           )
 
 contextTypeParser :: TokParser Type
@@ -420,7 +420,7 @@ typeAtomParserAlternatives thAny ipEnabled =
 -- outer kind-signature parser in a plain type context and rejected in a
 -- signature context.
 typeImplicitParamParser :: TokParser Type
-typeImplicitParamParser = withSpanAnn (TAnn . mkAnnotation) $ do
+typeImplicitParamParser = withSpanAnn (TAnn . mkSpanAnnotation) $ do
   name <- implicitParamNameParser
   expectedTok TkReservedDoubleColon
   TImplicitParam name <$> typeSignatureParser
@@ -429,20 +429,20 @@ typeWildcardParser :: TokParser Type
 typeWildcardParser =
   tokenSatisfy "wildcard" $ \tok ->
     case lexTokenKind tok of
-      TkKeywordUnderscore -> Just (TAnn (mkAnnotation (lexTokenSpan tok)) TWildcard)
+      TkKeywordUnderscore -> Just (TAnn (mkSpanAnnotation (lexTokenSpan tok)) TWildcard)
       _ -> Nothing
 
 typeLiteralTypeParser :: TokParser Type
 typeLiteralTypeParser =
   tokenSatisfy "type literal" $ \tok ->
     case lexTokenKind tok of
-      TkInteger n _ -> Just (TAnn (mkAnnotation (lexTokenSpan tok)) (TTypeLit (TypeLitInteger n (lexTokenText tok))))
-      TkString s -> Just (TAnn (mkAnnotation (lexTokenSpan tok)) (TTypeLit (TypeLitSymbol s (lexTokenText tok))))
-      TkChar c -> Just (TAnn (mkAnnotation (lexTokenSpan tok)) (TTypeLit (TypeLitChar c (lexTokenText tok))))
+      TkInteger n _ -> Just (TAnn (mkSpanAnnotation (lexTokenSpan tok)) (TTypeLit (TypeLitInteger n (lexTokenText tok))))
+      TkString s -> Just (TAnn (mkSpanAnnotation (lexTokenSpan tok)) (TTypeLit (TypeLitSymbol s (lexTokenText tok))))
+      TkChar c -> Just (TAnn (mkSpanAnnotation (lexTokenSpan tok)) (TTypeLit (TypeLitChar c (lexTokenText tok))))
       _ -> Nothing
 
 promotedTypeParser :: TokParser Type
-promotedTypeParser = withSpanAnn (TAnn . mkAnnotation) $ do
+promotedTypeParser = withSpanAnn (TAnn . mkSpanAnnotation) $ do
   -- Accept both TkVarSym "'" and TkTHQuoteTick for promoted types
   -- This handles ambiguity between TH value quotes and promoted types
   expectedTok (TkVarSym "'") <|> expectedTok TkTHQuoteTick
@@ -450,7 +450,7 @@ promotedTypeParser = withSpanAnn (TAnn . mkAnnotation) $ do
   maybe (fail "promoted type") pure (markTypePromoted ty)
 
 typeParenOperatorParser :: TokParser Type
-typeParenOperatorParser = withSpanAnn (TAnn . mkAnnotation) $ do
+typeParenOperatorParser = withSpanAnn (TAnn . mkSpanAnnotation) $ do
   expectedTok TkSpecialLParen
   starIsType <- isExtensionEnabled StarIsType
   unicodeSyntax <- isExtensionEnabled UnicodeSyntax
@@ -483,7 +483,7 @@ typeIdentifierParser :: TokParser Type
 typeIdentifierParser =
   tokenSatisfy "identifier" $ \tok ->
     identifierName tok <&> \name ->
-      TAnn (mkAnnotation (lexTokenSpan tok)) $
+      TAnn (mkSpanAnnotation (lexTokenSpan tok)) $
         case (nameQualifier name, nameType name, T.uncons (nameText name)) of
           (Nothing, NameVarId, Just (c, _))
             | isLower c || c == '_' ->
@@ -497,8 +497,8 @@ typeStarParser = do
   if starIsType
     then tokenSatisfy "star kind" $ \tok ->
       case lexTokenKind tok of
-        TkVarSym sym | isStarTypeSymbol starIsType unicodeSyntax sym -> Just (TAnn (mkAnnotation (lexTokenSpan tok)) (TStar (lexTokenText tok)))
-        TkConSym sym | isStarTypeSymbol starIsType unicodeSyntax sym -> Just (TAnn (mkAnnotation (lexTokenSpan tok)) (TStar (lexTokenText tok)))
+        TkVarSym sym | isStarTypeSymbol starIsType unicodeSyntax sym -> Just (TAnn (mkSpanAnnotation (lexTokenSpan tok)) (TStar (lexTokenText tok)))
+        TkConSym sym | isStarTypeSymbol starIsType unicodeSyntax sym -> Just (TAnn (mkSpanAnnotation (lexTokenSpan tok)) (TStar (lexTokenText tok)))
         _ -> Nothing
     else MP.empty
 
@@ -507,7 +507,7 @@ isStarTypeSymbol starIsType unicodeSyntax sym =
   starIsType && (sym == "*" || (unicodeSyntax && sym == "★"))
 
 typeListParser :: TokParser Type
-typeListParser = withSpanAnn (TAnn . mkAnnotation) $ do
+typeListParser = withSpanAnn (TAnn . mkSpanAnnotation) $ do
   expectedTok TkSpecialLBracket
   closedImmediately <- optionalTok TkSpecialRBracket
   if closedImmediately
@@ -518,7 +518,7 @@ typeListParser = withSpanAnn (TAnn . mkAnnotation) $ do
       pure (TList Unpromoted elems)
 
 typeParenOrTupleParser :: TokParser Type
-typeParenOrTupleParser = withSpanAnn (TAnn . mkAnnotation) $ do
+typeParenOrTupleParser = withSpanAnn (TAnn . mkSpanAnnotation) $ do
   (tupleFlavor, closeTok) <- tupleDelimsParser
   closedImmediately <- optionalTok closeTok
   if closedImmediately

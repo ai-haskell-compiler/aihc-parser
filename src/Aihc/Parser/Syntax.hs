@@ -150,6 +150,7 @@ module Aihc.Parser.Syntax
     instanceHeadName,
     instanceHeadTypes,
     mkAnnotation,
+    mkSpanAnnotation,
     fromAnnotation,
     stripAnnotations,
     peelArithSeqAnn,
@@ -1342,7 +1343,7 @@ data GuardedRhs body = GuardedRhs
 
 -- | A single qualifier inside a guarded right-hand side.
 data GuardQualifier
-  = -- | Metadata for the whole guard qualifier (typically a 'SourceSpan' via 'mkAnnotation').
+  = -- | Metadata for the whole guard qualifier (typically a 'SourceSpan' via 'mkSpanAnnotation').
     GuardAnn Annotation GuardQualifier
   | -- | @x > 0@
     GuardExpr Expr
@@ -1375,7 +1376,7 @@ data Literal
   deriving (Data, Eq, Show, Generic, NFData)
 
 literalAnnSpan :: SourceSpan -> Literal -> Literal
-literalAnnSpan sp = LitAnn (mkAnnotation sp)
+literalAnnSpan sp = LitAnn (mkSpanAnnotation sp)
 
 peelLiteralAnn :: Literal -> Literal
 peelLiteralAnn (LitAnn _ inner) = peelLiteralAnn inner
@@ -1560,7 +1561,7 @@ data BuiltinCon
   deriving (Data, Eq, Show, Generic, NFData)
 
 typeAnnSpan :: SourceSpan -> Type -> Type
-typeAnnSpan sp = TAnn (mkAnnotation sp)
+typeAnnSpan sp = TAnn (mkSpanAnnotation sp)
 
 -- | Peel nested 'TAnn' wrappers (e.g. span-only dynamic annotations).
 peelTypeAnn :: Type -> Type
@@ -1867,7 +1868,7 @@ data NewtypeDecl = NewtypeDecl
 
 -- | A data constructor declaration.
 data DataConDecl
-  = -- | Metadata for the whole constructor declaration (typically a 'SourceSpan' via 'mkAnnotation').
+  = -- | Metadata for the whole constructor declaration (typically a 'SourceSpan' via 'mkSpanAnnotation').
     DataConAnn Annotation DataConDecl
   | -- | @Just a@
     PrefixCon [TyVarBinder] [Type] UnqualifiedName [BangType]
@@ -2035,7 +2036,7 @@ data InstanceOverlapPragma
 
 -- | An item inside an instance body.
 data InstanceDeclItem
-  = -- | Metadata for the whole instance item (typically a 'SourceSpan' via 'mkAnnotation').
+  = -- | Metadata for the whole instance item (typically a 'SourceSpan' via 'mkSpanAnnotation').
     InstanceItemAnn Annotation InstanceDeclItem
   | -- | A method body such as @show x = ...@
     InstanceItemBind ValueDecl
@@ -2145,6 +2146,16 @@ mkAnnotation value =
     Just span' -> SourceSpanAnnotation span'
     Nothing -> DynamicAnnotation (toDyn value)
 {-# INLINE mkAnnotation #-}
+
+-- | Make an annotation from a 'SourceSpan'.
+--
+-- This gives the same result as @'mkAnnotation' span@, but it does not do a
+-- run-time type test. Thus GHC can build the constructor directly. With
+-- 'mkAnnotation', a lazy field often gets a thunk that keeps its free
+-- variables (for example, the whole token) alive until something forces it.
+mkSpanAnnotation :: SourceSpan -> Annotation
+mkSpanAnnotation = SourceSpanAnnotation
+{-# INLINE mkSpanAnnotation #-}
 
 fromAnnotation :: (Typeable a) => Annotation -> Maybe a
 fromAnnotation (SourceSpanAnnotation span') = cast span'
@@ -2320,7 +2331,7 @@ data DoFlavor
 
 -- | A statement inside a @do@ block.
 data DoStmt body
-  = -- | Metadata for the whole do-statement (typically a 'SourceSpan' via 'mkAnnotation').
+  = -- | Metadata for the whole do-statement (typically a 'SourceSpan' via 'mkSpanAnnotation').
     DoAnn Annotation (DoStmt body)
   | -- | @pat <- expr@
     DoBind Pattern body
@@ -2340,7 +2351,7 @@ peelDoStmtAnn s = s
 -- Commands mirror expressions but live in a separate namespace so the
 -- pretty-printer knows not to parenthesise @do { … }@ as an infix LHS.
 data Cmd
-  = -- | Metadata for the whole command (typically a 'SourceSpan' via 'mkAnnotation').
+  = -- | Metadata for the whole command (typically a 'SourceSpan' via 'mkSpanAnnotation').
     CmdAnn Annotation Cmd
   | -- | @exp -\< exp@ or @exp -\<\< exp@
     CmdArrApp Expr ArrAppType Expr
@@ -2376,7 +2387,7 @@ data ArrAppType
 
 -- | A statement inside a list comprehension.
 data CompStmt
-  = -- | Metadata for the whole comprehension statement (typically a 'SourceSpan' via 'mkAnnotation').
+  = -- | Metadata for the whole comprehension statement (typically a 'SourceSpan' via 'mkSpanAnnotation').
     CompAnn Annotation CompStmt
   | -- | @x <- xs@
     CompGen Pattern Expr
@@ -2400,7 +2411,7 @@ peelCompStmtAnn s = s
 
 -- | An arithmetic sequence expression.
 data ArithSeq
-  = -- | Metadata for the whole arithmetic sequence (typically a 'SourceSpan' via 'mkAnnotation').
+  = -- | Metadata for the whole arithmetic sequence (typically a 'SourceSpan' via 'mkSpanAnnotation').
     ArithSeqAnn Annotation ArithSeq
   | -- | @[expr ..]@
     ArithSeqFrom Expr
