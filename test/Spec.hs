@@ -147,6 +147,20 @@ assertParsedStrippedDeclShapeRoundTrip config source =
     ParseErr bundle ->
       assertFailure ("expected parse success for " <> T.unpack source <> "\n" <> formatParseErrors "<test>" Nothing bundle)
 
+assertParsedStrippedModuleShapeRoundTrip :: ParserConfig -> Text -> Assertion
+assertParsedStrippedModuleShapeRoundTrip config source =
+  case parseModule config source of
+    ([], modu) ->
+      let stripped = stripParens (stripAnnotations modu)
+          rendered = renderPretty stripped
+       in case parseModule config rendered of
+            ([], reparsed) ->
+              assertEqualShorthand (T.unpack rendered) stripped (stripAnnotations (stripParens reparsed))
+            (errs, _) ->
+              assertFailure ("expected pretty-printed module to reparse, got:\n" <> formatParseErrors "<test>" (Just rendered) errs)
+    (errs, _) ->
+      assertFailure ("expected parse success for:\n" <> T.unpack source <> "\n" <> formatParseErrors "<test>" (Just source) errs)
+
 assertParsedModulePrettyContains :: Text -> Text -> Assertion
 assertParsedModulePrettyContains source expected =
   case parseModule defaultConfig source of
@@ -294,6 +308,8 @@ buildTests = do
             testCase "pretty-prints multi-way if left operands inside do using layout" test_prettyMultiWayIfInfixLhsInsideDo,
             testCase "pretty-prints multi-way if left operands inside unboxed tuples with parentheses" test_prettyMultiWayIfInfixLhsInsideUnboxedTuple,
             testCase "pretty-prints multi-way if left operands inside unboxed sums with parentheses" test_prettyMultiWayIfInfixLhsInsideUnboxedSum,
+            testCase "pretty-prints multi-way if left operands in infix chains using layout" test_prettyMultiWayIfNestedInfixLhs,
+            testCase "pretty-prints multi-way if parallel comprehension bodies using layout" test_prettyMultiWayIfParallelListCompBody,
             testCase "pretty-prints lambda-case applicative chains without extra parens" test_prettyLambdaCaseApplicativeChain,
             testCase "pretty-prints TH splices before record dots with parentheses" test_prettySpliceRecordDotBase,
             testCase "rejects compact explicit type namespace TH splices" test_compactExplicitTypeNamespaceTHSplicesReject,
@@ -1456,6 +1472,43 @@ test_prettyMultiWayIfInfixLhsInsideUnboxedSum = do
              `a` ()) | #)
         """
   assertParsedStrippedExprShapeRoundTrip config source
+
+-- Two levels of infix nesting put the continuation line at the column of the
+-- @|@ of the multi-way if.  The @|@ must thus move to the right of the
+-- continuation line.  See issue #54.
+test_prettyMultiWayIfNestedInfixLhs :: Assertion
+test_prettyMultiWayIfNestedInfixLhs = do
+  let config = defaultConfig {parserExtensions = [MultiWayIf]}
+      source =
+        """
+        ((if | True
+             ->
+              ())
+          `a` ())
+         `a` ()
+        """
+  assertParsedStrippedExprShapeRoundTrip config source
+
+-- The @|@ of a parallel list comprehension can land at the column of the @|@
+-- of a multi-way if in the body of that comprehension.  See issue #54.
+test_prettyMultiWayIfParallelListCompBody :: Assertion
+test_prettyMultiWayIfParallelListCompBody = do
+  let config =
+        defaultConfig
+          { parserExtensions = [MultiWayIf, ImplicitParams, UnboxedSums, ParallelListComp]
+          }
+      source =
+        """
+        _ = []
+          where
+            ?x = (# ([(if | []
+                           ->
+                            [])
+                      | []
+                      | let {  }]
+                     `a` []) | |  #)
+        """
+  assertParsedStrippedModuleShapeRoundTrip config source
 
 test_prettyLambdaCaseApplicativeChain :: Assertion
 test_prettyLambdaCaseApplicativeChain = do
