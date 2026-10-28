@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- The pretty-printer puts an expression on one line when it fits in the
+  page width. For example, it prints `f x = x + 1` on one line. Before, it
+  put each operator and each function argument on a new line. A long
+  expression still breaks at the same points as before. Layout blocks
+  (`do`, `case`, `where`, `let`, guards, and multi-way `if`) still start new
+  lines where the layout rule needs them.
+
 ## [5.0.1.0] - 2026-10-21
 
 ### Added

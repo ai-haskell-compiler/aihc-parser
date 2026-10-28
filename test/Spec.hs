@@ -290,6 +290,7 @@ buildTests = do
             testCase "generated expressions can include explicit type syntax" test_generatedExpressionsCanIncludeExplicitTypeSyntax,
             testCase "pretty-prints negated layout-ending list-comprehension bodies" test_prettyNegatedLayoutEndingListCompBody,
             testCase "pretty-prints layout let guards in multi-way if" test_prettyLayoutLetGuardInMultiWayIf,
+            testCase "pretty-prints typed let guards in case alternatives on separate lines" test_prettyTypedLetGuardInCaseAlt,
             testCase "pretty-prints multi-way if left operands using layout" test_prettyMultiWayIfInfixLhs,
             testCase "pretty-prints multi-way if left operands inside do using layout" test_prettyMultiWayIfInfixLhsInsideDo,
             testCase "pretty-prints multi-way if left operands inside unboxed tuples with parentheses" test_prettyMultiWayIfInfixLhsInsideUnboxedTuple,
@@ -1407,6 +1408,18 @@ test_prettyLayoutLetGuardInMultiWayIf = do
         """
   assertParsedStrippedExprShapeRoundTrip config source
 
+test_prettyTypedLetGuardInCaseAlt :: Assertion
+test_prettyTypedLetGuardInCaseAlt = do
+  let config = defaultConfig {parserExtensions = [LambdaCase]}
+      source =
+        """
+        \\case
+          _ | let _ = []
+                    :: _
+             -> []
+        """
+  assertParsedStrippedExprShapeRoundTrip config source
+
 test_prettyMultiWayIfInfixLhs :: Assertion
 test_prettyMultiWayIfInfixLhs = do
   let config = defaultConfig {parserExtensions = [MultiWayIf]}
@@ -1813,9 +1826,7 @@ test_viewExprBlockInfixLhsNoParens = do
         """
       expected =
         """
-        f [case [] of {  }
-         + []
-         -> _] = []
+        f [case [] of {  } + [] -> _] = []
         """
   assertParsedModulePrettyContains source expected
 

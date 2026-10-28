@@ -41,9 +41,14 @@ import Prettyprinter
     braces,
     brackets,
     comma,
+    concatWith,
+    flatAlt,
+    group,
     hang,
     hardline,
     hsep,
+    line,
+    line',
     nest,
     nesting,
     parens,
@@ -61,6 +66,31 @@ import Prettyprinter
 -- >>> import Prettyprinter.Render.String (renderString)
 -- >>> let renderDoc = renderString . layoutPretty defaultLayoutOptions
 
+-- __Line breaks.__ A construct that can fit on one line uses 'group' with
+-- soft breaks ('line', 'line'', or 'spacedLine'). If the construct does not
+-- fit, each soft break becomes a line break. Layout blocks ('do', 'case',
+-- 'let', 'where', guards, and declaration lists) use 'hardline' and
+-- 'hardVsep'. A 'group' that contains a hard line break does not become flat.
+-- Thus a layout block always stops the enclosing groups from becoming flat,
+-- and text that follows a block cannot move into the block.
+
+-- | Put each document on a new line. Unlike 'vsep', the breaks stay line
+-- breaks in a 'group'. Use this for layout blocks.
+hardVsep :: [Doc ann] -> Doc ann
+hardVsep = concatWith (\x y -> x <> hardline <> y)
+
+-- | A soft break that keeps one space before the next token when it breaks.
+-- In a flat 'group', it is one space.
+spacedLine :: Doc ann
+spacedLine = flatAlt (hardline <> " ") " "
+
+-- | An empty document that stops each enclosing 'group' from becoming flat.
+-- Use it at the end of a layout block that has no closing token, for example
+-- a multi-way @if@. Text on the same line after such a block goes into the
+-- block, so the enclosing construct must break the line.
+noFlat :: Doc ann
+noFlat = flatAlt mempty hardline
+
 -- | Wrap a document in braces with interior spaces: @{ content }@.
 -- Unlike 'braces' which produces @{content}@, this version avoids the
 -- @{-@ block-comment ambiguity that occurs when the content starts with a
@@ -70,8 +100,14 @@ spacedBraces d = "{" <+> d <+> "}"
 
 prettyRawText :: Text -> Doc ann
 prettyRawText raw
-  | T.isInfixOf "\n" raw = nesting $ \level -> nest (negate level) (pretty raw)
+  | T.isInfixOf "\n" raw = nesting $ \level -> nest (negate level) (prettyHardLines raw)
   | otherwise = pretty raw
+
+-- | Print text that can contain newlines. Each newline stays a line break in
+-- a 'group'. The 'Pretty' instance for 'Text' uses 'line', which a flat
+-- 'group' changes to a space.
+prettyHardLines :: Text -> Doc ann
+prettyHardLines = hardVsep . map pretty . T.splitOn "\n"
 
 prettySpliceBody :: Expr -> Doc ann
 prettySpliceBody = prettyExpr
@@ -90,7 +126,7 @@ instance Pretty Pattern where
 
 -- | Pretty instance for Decl - renders to valid Haskell source code.
 instance Pretty Decl where
-  pretty decl = vsep (prettyDeclLines (addDeclParens decl))
+  pretty decl = hardVsep (prettyDeclLines (addDeclParens decl))
 
 -- | Pretty instance for Type - renders to valid Haskell source code.
 instance Pretty Type where
@@ -104,7 +140,7 @@ instance Pretty UnqualifiedName where
 
 prettyModuleDoc :: Module -> Doc ann
 prettyModuleDoc modu =
-  vsep (pragmaLines <> headerLines <> importLines <> declLines)
+  hardVsep (pragmaLines <> headerLines <> importLines <> declLines)
   where
     pragmaLines =
       map
@@ -392,7 +428,7 @@ prettyPatSynWhere _ PatSynBidirectional = []
 prettyPatSynWhere _ PatSynUnidirectional = []
 prettyPatSynWhere _ (PatSynExplicitBidirectional []) = ["where", spacedBraces mempty]
 prettyPatSynWhere name (PatSynExplicitBidirectional matches) =
-  ["where" <> nest 2 (hardline <> vsep (map (prettyFunctionMatch name) matches))]
+  ["where" <> nest 2 (hardline <> hardVsep (map (prettyFunctionMatch name) matches))]
 
 prettyFunctionMatchLines :: UnqualifiedName -> Match -> [Doc ann]
 prettyFunctionMatchLines name match =
@@ -403,7 +439,7 @@ prettyFunctionMatchLines name match =
           <> nest
             2
             ( hardline
-                <> vsep
+                <> hardVsep
                   ( map prettyGuardedRhsBlock grhss
                       <> [prettyWhereClauseBare mWhereDecls | isJust mWhereDecls]
                   )
@@ -443,7 +479,7 @@ prettyWhereClauseBare :: Maybe [Decl] -> Doc ann
 prettyWhereClauseBare Nothing = mempty
 prettyWhereClauseBare (Just []) = "where" <+> spacedBraces mempty
 prettyWhereClauseBare (Just decls) =
-  "where" <> nest 2 (hardline <> vsep (concatMap prettyDeclLines decls))
+  "where" <> nest 2 (hardline <> hardVsep (concatMap prettyDeclLines decls))
 
 prettyIndentedWhereClause :: Maybe [Decl] -> Doc ann
 prettyIndentedWhereClause Nothing = mempty
@@ -453,7 +489,7 @@ prettyTHDeclQuote :: [Decl] -> Doc ann
 prettyTHDeclQuote [] = "[d| |]"
 prettyTHDeclQuote decls =
   "[d|"
-    <> nest 2 (hardline <> vsep (concatMap prettyDeclLines decls))
+    <> nest 2 (hardline <> hardVsep (concatMap prettyDeclLines decls))
     <+> "|]"
 
 -- | Infix type-family heads use @l \`Op\` r@ with a 'NameConId' operator (e.g.
@@ -607,7 +643,7 @@ prettyPattern pat =
       hsep ([prettyBuiltinCon con] <> map prettyInvisibleTypeArg typeArgs <> map prettyPattern args)
     PInfix lhs op rhs -> prettyPattern lhs <+> prettyNameInfixOp op <+> prettyPattern rhs
     PView viewExpr inner ->
-      prettyExpr viewExpr <> nest 1 (hardline <> "->" <+> prettyPattern inner)
+      group (prettyExpr viewExpr <> nest 1 (line <> "->" <+> prettyPattern inner))
     PAs name inner -> prettyBinderUName name <> "@" <> prettyPattern inner
     PStrict inner -> "!" <> prettyPattern inner
     PIrrefutable inner -> "~" <> prettyPattern inner
@@ -716,7 +752,7 @@ derivingParts = concatMap derivingPart
 prettyGadtConBlock :: [DataConDecl] -> [DerivingClause] -> Doc ann
 prettyGadtConBlock ctors derivingClauses =
   "where"
-    <> nest 2 (hardline <> vsep (map prettyDataCon ctors <> derivingParts derivingClauses))
+    <> nest 2 (hardline <> hardVsep (map prettyDataCon ctors <> derivingParts derivingClauses))
 
 derivingPart :: DerivingClause -> [Doc ann]
 derivingPart (DerivingClause strategy classes) =
@@ -909,7 +945,7 @@ prettyClassDecl decl =
         items ->
           headDoc
             <+> "where"
-            <> nest 2 (hardline <> vsep (concatMap prettyClassItemLines items))
+            <> nest 2 (hardline <> hardVsep (concatMap prettyClassItemLines items))
 
 prettyClassFundeps :: [FunctionalDependency] -> [Doc ann]
 prettyClassFundeps deps =
@@ -981,7 +1017,7 @@ prettyInstanceDecl decl =
         items ->
           headDoc
             <+> "where"
-            <> nest 2 (hardline <> vsep (concatMap prettyInstanceItemLines items))
+            <> nest 2 (hardline <> hardVsep (concatMap prettyInstanceItemLines items))
 
 prettyStandaloneDeriving :: StandaloneDerivingDecl -> Doc ann
 prettyStandaloneDeriving decl =
@@ -998,7 +1034,7 @@ prettyStandaloneDeriving decl =
 
 prettyPragma :: Pragma -> Doc ann
 prettyPragma pragma
-  | not (T.null (pragmaRawText pragma)) = pretty (pragmaRawText pragma)
+  | not (T.null (pragmaRawText pragma)) = prettyHardLines (pragmaRawText pragma)
   | otherwise = prettyPragmaType (pragmaType pragma)
 
 prettyPragmaType :: PragmaType -> Doc ann
@@ -1020,7 +1056,7 @@ prettyPragmaType pt =
         NoUnpackPragma -> "{-# NOUNPACK #-}"
     PragmaSource sourceText _ -> "{-# SOURCE " <> pretty sourceText <> " #-}"
     PragmaSCC label -> "{-# SCC " <> pretty label <> " #-}"
-    PragmaUnknown text -> pretty text
+    PragmaUnknown text -> prettyHardLines text
 
 prettyDerivingStrategy :: DerivingStrategy -> Doc ann
 prettyDerivingStrategy strategy =
@@ -1199,13 +1235,13 @@ prettyConstructorUName name
 -- nodes in the correct positions (inserted by 'addExprParens').
 --
 -- >>> let expr = EApp (EVar "f") (EParen (EInfix (EVar "x") "+" (EVar "y"))) in (renderDoc (prettyExpr expr), show (shorthand expr))
--- ("f\n  (x\n   + y)","EApp (EVar \"f\") (EParen (EInfix (EVar \"x\") \"+\" (EVar \"y\")))")
+-- ("f (x + y)","EApp (EVar \"f\") (EParen (EInfix (EVar \"x\") \"+\" (EVar \"y\")))")
 prettyExpr :: Expr -> Doc ann
 prettyExpr expr =
   case expr of
     EApp {} -> prettyApp expr
     ETypeApp fn ty ->
-      nest 2 (prettyExpr fn) <> nest 1 (hardline <> " " <> prettyTypeAppArg ty)
+      group (nest 2 (prettyExpr fn) <> nest 1 (spacedLine <> prettyTypeAppArg ty))
     EVar name -> prettyName name
     EImplicitParam name -> pretty name
     ETypeSyntax TypeSyntaxExplicitNamespace ty -> "type" <+> prettyType ty
@@ -1228,9 +1264,9 @@ prettyExpr expr =
     ETHSplice body -> "$" <> prettySpliceBody body
     ETHTypedSplice body -> "$$" <> prettySpliceBody body
     EIf cond yes no ->
-      "if" <+> prettyExpr cond <+> "then" <+> prettyExpr yes <+> "else" <+> prettyExpr no
+      group ("if" <+> prettyExpr cond <> nest 2 (line <> "then" <+> prettyExpr yes <> line <> "else" <+> prettyExpr no))
     EMultiWayIf rhss ->
-      "if" <+> align (prettyMultiWayIfRhss rhss)
+      "if" <+> align (prettyMultiWayIfRhss rhss) <> noFlat
     ELambdaPats pats body ->
       "\\" <+> hsep (map prettyPattern pats) <+> "->" <+> prettyExpr body
     ELambdaCase alts ->
@@ -1238,17 +1274,17 @@ prettyExpr expr =
     ELambdaCases alts ->
       "\\" <> "cases" <> prettyCaseLayout (map prettyLambdaCaseAlt alts)
     EInfix lhs op rhs ->
-      nest 2 (prettyExpr lhs) <> nest 1 (hardline <> prettyNameInfixOp op <+> prettyExpr rhs)
+      group (nest 2 (prettyExpr lhs) <> nest 1 (line <> prettyNameInfixOp op <+> prettyExpr rhs))
     EViewPat viewExpr rhs ->
-      prettyExpr viewExpr <> nest 1 (hardline <> "->" <+> prettyExpr rhs)
+      group (prettyExpr viewExpr <> nest 1 (line <> "->" <+> prettyExpr rhs))
     ENegate inner -> "-" <+> prettyExprAtStatementStart inner
     ESectionL lhs op ->
-      nest 2 (prettyExpr lhs) <> nest 1 (hardline <> " " <> prettyNameInfixOp op)
+      group (nest 2 (prettyExpr lhs) <> nest 1 (spacedLine <> prettyNameInfixOp op))
     ESectionR op rhs -> prettyNameInfixOp op <+> prettyExpr rhs
     ELetDecls decls body ->
       case decls of
         [] -> prettyLetDecls decls <+> "in" <+> prettyExpr body
-        _ -> align (prettyLetDecls decls <> nest 2 (hardline <> "in" <+> prettyExpr body))
+        _ -> group (align (prettyLetDecls decls <> nest 2 (line <> "in" <+> prettyExpr body)))
     ECase scrutinee alts ->
       prettyCaseExpr prettyCaseLayout scrutinee alts
     EDo stmts flavor ->
@@ -1256,16 +1292,16 @@ prettyExpr expr =
     EListComp body quals ->
       brackets
         ( let qualifiers = prettyCommaSeparated prettyCompStmt quals
-           in prettyExpr body <> hardline <> " |" <+> qualifiers
+           in group (prettyExpr body <> spacedLine <> "|" <+> qualifiers)
         )
     EListCompParallel body qualifierGroups ->
       brackets
         ( let qualifiers =
                 prettyBarSeparated
-                  [ prettyCommaSeparated prettyCompStmt group
-                  | group <- qualifierGroups
+                  [ prettyCommaSeparated prettyCompStmt qualifierGroup
+                  | qualifierGroup <- qualifierGroups
                   ]
-           in prettyExpr body <> hardline <> " |" <+> qualifiers
+           in group (prettyExpr body <> spacedLine <> "|" <+> qualifiers)
         )
     EArithSeq seqInfo -> prettyArithSeq seqInfo
     ERecordCon name fields hasWildcard ->
@@ -1277,7 +1313,7 @@ prettyExpr expr =
     EGetFieldProjection fields ->
       "." <> mconcat (punctuate "." (map prettyName fields))
     ETypeSig inner ty ->
-      nest 2 (prettyExpr inner) <> nest 1 (hardline <> "::" <+> prettyType ty)
+      group (nest 2 (prettyExpr inner) <> nest 1 (line <> "::" <+> prettyType ty))
     EParen inner -> case inner of
       ECase scrutinee alts ->
         parens (prettyCaseExpr prettyCaseLayout scrutinee alts)
@@ -1309,7 +1345,7 @@ prettyApp = prettyAppWith prettyExpr
 prettyAppWith :: (Expr -> Doc ann) -> Expr -> Doc ann
 prettyAppWith prettyFn expr =
   let (fn, args) = flattenApps expr
-   in prettyFn fn <> nest 2 (hardline <> vsep (map prettyExpr args))
+   in group (prettyFn fn <> nest 2 (line <> vsep (map prettyExpr args)))
   where
     flattenApps = go []
     go args (EAnn _ sub) = go args sub
@@ -1326,7 +1362,7 @@ prettyBarSeparated :: [Doc ann] -> Doc ann
 prettyBarSeparated items =
   case items of
     [] -> mempty
-    firstItem : restItems -> hang 1 (vsep (firstItem : map ("|" <+>) restItems))
+    firstItem : restItems -> group (hang 1 (vsep (firstItem : map ("|" <+>) restItems)))
 
 prettyTupleBody :: TupleFlavor -> Doc ann -> Doc ann
 prettyTupleBody tupleFlavor inner =
@@ -1360,23 +1396,25 @@ prettyGuardedRhsBodyBlock :: Text -> GuardedRhs Expr -> Doc ann
 prettyGuardedRhsBodyBlock arrow grhs =
   let guards = guardedRhsGuards grhs
       body = guardedRhsBody grhs
-   in "|"
-        <+> prettyGuardQualifiersLayout guards
-        <> hardline
-        <> " "
-        <> pretty arrow
-        <+> prettyExpr body
+   in group
+        ( "|"
+            <+> prettyGuardQualifiersLayout guards
+            <> spacedLine
+            <> pretty arrow
+            <+> prettyExpr body
+        )
 
 prettyCaseGuardedRhsBlock :: (body -> Doc ann) -> GuardedRhs body -> Doc ann
 prettyCaseGuardedRhsBlock prettyBody grhs =
   let guards = guardedRhsGuards grhs
       body = guardedRhsBody grhs
-   in "|"
-        <+> prettyGuardQualifiersLayout guards
-        <> hardline
-        <> " "
-        <> "->"
-        <+> nest 2 (prettyBody body)
+   in group
+        ( "|"
+            <+> prettyGuardQualifiersLayout guards
+            <> spacedLine
+            <> "->"
+            <+> nest 2 (prettyBody body)
+        )
 
 prettyGuardedCaseAlt :: Doc ann -> (body -> Doc ann) -> [GuardedRhs body] -> Doc ann
 prettyGuardedCaseAlt headDoc prettyBody grhss =
@@ -1384,10 +1422,10 @@ prettyGuardedCaseAlt headDoc prettyBody grhss =
     [] -> headDoc
     [firstGrhs] -> headDoc <+> firstGrhs
     firstGrhs : restGrhss ->
-      headDoc <+> firstGrhs <> nest 2 (hardline <> vsep restGrhss)
+      headDoc <+> firstGrhs <> nest 2 (hardline <> hardVsep restGrhss)
 
 prettyMultiWayIfRhss :: [GuardedRhs Expr] -> Doc ann
-prettyMultiWayIfRhss rhss = vsep (map (prettyGuardedRhsBodyBlock "->") rhss)
+prettyMultiWayIfRhss rhss = hardVsep (map (prettyGuardedRhsBodyBlock "->") rhss)
 
 prettyGuardQualifiersLayout :: [GuardQualifier] -> Doc ann
 prettyGuardQualifiersLayout qualifiers =
@@ -1395,7 +1433,7 @@ prettyGuardQualifiersLayout qualifiers =
     [] -> mempty
     [firstQualifier] -> firstQualifier
     firstQualifier : restQualifiers ->
-      firstQualifier <> nest 2 (hardline <> vsep (map (comma <+>) restQualifiers))
+      group (firstQualifier <> nest 2 (line' <> concatWith (\x y -> x <> line' <> y) (map (comma <+>) restQualifiers)))
 
 prettyCaseExpr :: ([Doc ann] -> Doc ann) -> Expr -> [CaseAlt Expr] -> Doc ann
 prettyCaseExpr layout scrutinee alts =
@@ -1406,7 +1444,7 @@ prettyCaseExpr layout scrutinee alts =
 
 prettyCaseLayout :: [Doc ann] -> Doc ann
 prettyCaseLayout [] = " " <> spacedBraces mempty
-prettyCaseLayout alts = nest 2 (hardline <> vsep alts)
+prettyCaseLayout alts = nest 2 (hardline <> hardVsep alts)
 
 prettyLambdaCaseAlt :: LambdaCaseAlt -> Doc ann
 prettyLambdaCaseAlt (LambdaCaseAlt _ pats rhs) =
@@ -1426,13 +1464,15 @@ prettyGuardQualifier qualifier =
     GuardAnn _ inner -> prettyGuardQualifier inner
     GuardExpr expr -> prettyExpr expr
     GuardPat pat expr -> prettyPattern pat <+> "<-" <+> prettyExpr expr
-    GuardLet decls -> prettyLetDecls decls
+    -- The let block has no closing token. On one line, the guard arrow can
+    -- go into the block, for example into a type signature.
+    GuardLet decls -> prettyLetDecls decls <> noFlat
 
 prettyLetDecls :: [Decl] -> Doc ann
 prettyLetDecls decls
   | null decls = "let" <+> spacedBraces mempty
   | otherwise =
-      "let" <+> align (vsep (concatMap prettyDeclLines decls))
+      "let" <+> align (hardVsep (concatMap prettyDeclLines decls))
 
 prettyDoFlavor :: DoFlavor -> Doc ann
 prettyDoFlavor DoPlain = "do"
@@ -1450,7 +1490,7 @@ prettyLayoutStatements :: (a -> Doc ann) -> [a] -> Doc ann
 prettyLayoutStatements prettyStmt stmts =
   case map prettyStmt stmts of
     [] -> mempty
-    rendered -> vsep rendered
+    rendered -> hardVsep rendered
 
 prettyDoStmt :: DoStmt Expr -> Doc ann
 prettyDoStmt stmt =
@@ -1469,10 +1509,10 @@ prettyExprAtStatementStart expr =
     EAnn _ sub -> prettyExprAtStatementStart sub
     EOverloadedLabel _ raw -> pretty raw
     EApp {} -> prettyAppWith prettyExprAtStatementStart expr
-    ETypeApp fn ty -> nest 2 (prettyExprAtStatementStart fn) <> nest 1 (hardline <> " " <> prettyTypeAppArg ty)
-    EInfix lhs op rhs -> nest 2 (prettyExprAtStatementStart lhs) <> nest 1 (hardline <> prettyNameInfixOp op <+> prettyExpr rhs)
-    ESectionL lhs op -> nest 2 (prettyExprAtStatementStart lhs) <> nest 1 (hardline <> " " <> prettyNameInfixOp op)
-    ETypeSig inner ty -> nest 2 (prettyExprAtStatementStart inner) <> nest 1 (hardline <> "::" <+> prettyType ty)
+    ETypeApp fn ty -> group (nest 2 (prettyExprAtStatementStart fn) <> nest 1 (spacedLine <> prettyTypeAppArg ty))
+    EInfix lhs op rhs -> group (nest 2 (prettyExprAtStatementStart lhs) <> nest 1 (line <> prettyNameInfixOp op <+> prettyExpr rhs))
+    ESectionL lhs op -> group (nest 2 (prettyExprAtStatementStart lhs) <> nest 1 (spacedLine <> prettyNameInfixOp op))
+    ETypeSig inner ty -> group (nest 2 (prettyExprAtStatementStart inner) <> nest 1 (line <> "::" <+> prettyType ty))
     ERecordUpd base fields ->
       prettyExprAtStatementStart base <+> braces (hsep (punctuate comma (map prettyBinding fields)))
     EGetField base field ->
@@ -1489,17 +1529,17 @@ prettyCmd cmd =
     CmdArrApp lhs HsHigherOrderApp rhs ->
       prettyExpr lhs <+> "-<<" <+> prettyExpr rhs
     CmdInfix l op r ->
-      nest 2 (prettyCmd l) <> nest 1 (hardline <> " " <> prettyNameInfixOp op <+> prettyCmd r)
+      group (nest 2 (prettyCmd l) <> nest 1 (spacedLine <> prettyNameInfixOp op <+> prettyCmd r))
     CmdDo stmts ->
       "do" <> nest 2 (prettyDoLayout prettyCmdStmt stmts)
     CmdIf cond yes no ->
-      "if" <+> prettyExpr cond <+> "then" <+> prettyCmd yes <+> "else" <+> prettyCmd no
+      group ("if" <+> prettyExpr cond <> nest 2 (line <> "then" <+> prettyCmd yes <> line <> "else" <+> prettyCmd no))
     CmdCase scrut alts ->
       "case" <+> prettyExpr scrut <+> "of" <> prettyCaseLayout (map prettyCmdCaseAlt alts)
     CmdLet decls body ->
       case decls of
         [] -> prettyLetDecls decls <+> "in" <+> prettyCmd body
-        _ -> align (prettyLetDecls decls <> nest 2 (hardline <> "in" <+> prettyCmd body))
+        _ -> group (align (prettyLetDecls decls <> nest 2 (line <> "in" <+> prettyCmd body)))
     CmdLam pats body ->
       "\\" <+> hsep (map prettyPattern pats) <+> "->" <+> prettyCmd body
     CmdApp c e ->
@@ -1526,7 +1566,7 @@ prettyCmdAtStatementStart cmd =
     CmdArrApp lhs HsHigherOrderApp rhs ->
       prettyExprAtStatementStart lhs <+> "-<<" <+> prettyExpr rhs
     CmdInfix l op r ->
-      nest 2 (prettyCmdAtStatementStart l) <> nest 1 (hardline <> " " <> prettyNameInfixOp op <+> prettyCmd r)
+      group (nest 2 (prettyCmdAtStatementStart l) <> nest 1 (spacedLine <> prettyNameInfixOp op <+> prettyCmd r))
     CmdApp c e ->
       prettyCmdAtStatementStart c <+> prettyExpr e
     _ -> prettyCmd cmd
@@ -1548,7 +1588,7 @@ prettyCompStmt stmt =
 
 prettyGuardedRhssBlock :: [GuardedRhs Expr] -> Maybe [Decl] -> Doc ann
 prettyGuardedRhssBlock guards whereDecls =
-  vsep (map prettyGuardedRhsBlock guards)
+  hardVsep (map prettyGuardedRhsBlock guards)
     <> case whereDecls of
       Nothing -> mempty
       Just _ -> hardline <> prettyWhereClauseBare whereDecls
@@ -1599,7 +1639,7 @@ prettyTypeFamilyDecl tf =
       ["=", prettyTyVarBinder result, "|", prettyTypeFamilyInjectivity injectivity]
     eqsPart Nothing = []
     eqsPart (Just []) = ["where", spacedBraces mempty]
-    eqsPart (Just eqs) = ["where" <> nest 2 (hardline <> vsep (map prettyTypeFamilyEq eqs))]
+    eqsPart (Just eqs) = ["where" <> nest 2 (hardline <> hardVsep (map prettyTypeFamilyEq eqs))]
 
 prettyTypeFamilyEq :: TypeFamilyEq -> Doc ann
 prettyTypeFamilyEq eq =
