@@ -12,6 +12,7 @@ module ExtensionSupport
     finalizeOutcome,
     evaluateCaseFromFile,
     evaluateCaseText,
+    preprocessCaseSource,
   )
 where
 
@@ -80,18 +81,22 @@ evaluateCaseFromFile meta = do
 evaluateCaseText :: CaseMeta -> Text -> (CaseMeta, Outcome, String)
 evaluateCaseText meta source =
   let exts = caseExtensions meta
-      source' =
-        resultOutput
-          ( preprocessForParserWithoutIncludesIfEnabled
-              (caseExtensions meta)
-              []
-              (casePath meta)
-              []
-              source
-          )
+      source' = preprocessCaseSource meta source
       oracleOk = either Just (const Nothing) (oracleModuleAstFingerprint (casePath meta) Syntax.Haskell2010Edition exts source')
       validationOk = fmap show (validateParser (casePath meta) Syntax.Haskell2010Edition exts source')
    in finalizeOutcome meta oracleOk validationOk
+
+-- | Run CPP on the source of a case when the case enables it.
+preprocessCaseSource :: CaseMeta -> Text -> Text
+preprocessCaseSource meta source =
+  resultOutput
+    ( preprocessForParserWithoutIncludesIfEnabled
+        (caseExtensions meta)
+        []
+        (casePath meta)
+        []
+        source
+    )
 
 trim :: String -> String
 trim = dropWhile isSpace . dropWhileEnd isSpace
