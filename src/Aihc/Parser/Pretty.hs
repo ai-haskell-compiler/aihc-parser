@@ -40,6 +40,7 @@ import Prettyprinter
     align,
     braces,
     brackets,
+    column,
     comma,
     concatWith,
     flatAlt,
@@ -1266,7 +1267,7 @@ prettyExpr expr =
     EIf cond yes no ->
       group ("if" <+> prettyExpr cond <> nest 2 (line <> "then" <+> prettyExpr yes <> line <> "else" <+> prettyExpr no))
     EMultiWayIf rhss ->
-      "if" <+> align (prettyMultiWayIfRhss rhss) <> noFlat
+      "if" <> prettyMultiWayIfBlock (prettyMultiWayIfRhss rhss) <> noFlat
     ELambdaPats pats body ->
       "\\" <+> hsep (map prettyPattern pats) <+> "->" <+> prettyExpr body
     ELambdaCase alts ->
@@ -1426,6 +1427,34 @@ prettyGuardedCaseAlt headDoc prettyBody grhss =
 
 prettyMultiWayIfRhss :: [GuardedRhs Expr] -> Doc ann
 prettyMultiWayIfRhss rhss = hardVsep (map (prettyGuardedRhsBodyBlock "->") rhss)
+
+-- | Put the alternatives of a multi-way @if@ in a layout block that starts to
+-- the right of the @if@ keyword and also to the right of the current
+-- indentation.
+--
+-- The alternatives are an implicit layout block that opens at the first @|@.
+-- A later line at the same column as that @|@, or further right, continues the
+-- last alternative.  It does not close the block.  The enclosing expression
+-- puts its continuation lines relative to the current indentation, which can
+-- be further right than the @if@ keyword.  Thus the block must also clear the
+-- indentation, or the printed module does not parse to the same syntax tree.
+prettyMultiWayIfBlock :: Doc ann -> Doc ann
+prettyMultiWayIfBlock alternatives =
+  column
+    ( \col ->
+        nesting
+          ( \indent ->
+              let target = max (col + 1) (indent + multiWayIfBarOffset)
+               in pretty (T.replicate (target - col) " ") <> nest (target - indent) alternatives
+          )
+    )
+
+-- | The least distance between the current indentation and the @|@ of a
+-- multi-way @if@.  Each continuation line that the pretty-printer puts after a
+-- sub-expression is at most two columns to the right of the indentation of that
+-- sub-expression.  Three columns thus always close the block.
+multiWayIfBarOffset :: Int
+multiWayIfBarOffset = 3
 
 prettyGuardQualifiersLayout :: [GuardQualifier] -> Doc ann
 prettyGuardQualifiersLayout qualifiers =

@@ -15,6 +15,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`do`, `case`, `where`, `let`, guards, and multi-way `if`) still start new
   lines where the layout rule needs them.
 
+### Fixed
+
+- The pretty-printer puts the alternatives of a multi-way `if` to the right of
+  the current indentation. Before, a continuation line of the expression
+  around the `if` could start at the column of the `|` of an alternative. The
+  parser then read that line as part of the last alternative, and the printed
+  module did not parse to the same syntax tree.
+
 ## [5.0.1.0] - 2026-10-21
 
 ### Added
