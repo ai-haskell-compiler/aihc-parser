@@ -594,7 +594,8 @@ classDefaultTypeInstShorthandParser = classDefaultTypeInstParser' False
 classDefaultTypeInstParser' :: Bool -> TokParser ClassDeclItem
 classDefaultTypeInstParser' requireInstance = withSpanAnn (ClassItemAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordType
-  when requireInstance (expectedTok TkKeywordInstance)
+  -- The AST does not keep the @instance@ keyword of a default instance.
+  when requireInstance (discardTok TkKeywordInstance)
   forallBinders <- MP.option [] explicitForallParser
   (headForm, lhs) <- typeFamilyLhsParser
   expectedTok TkReservedEquals
@@ -618,7 +619,8 @@ classDefaultTypeInstParser' requireInstance = withSpanAnn (ClassItemAnn . mkSpan
 instanceTypeFamilyInstParser :: TokParser InstanceDeclItem
 instanceTypeFamilyInstParser = withSpanAnn (InstanceItemAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordType
-  _ <- optionalTok TkKeywordInstance
+  hasInstance <- optionalTok TkKeywordInstance
+  when hasInstance discardLastToken
   forallBinders <- MP.option [] explicitForallParser
   (headForm, lhs) <- typeFamilyLhsParser
   expectedTok TkReservedEquals
@@ -637,7 +639,8 @@ instanceTypeFamilyInstParser = withSpanAnn (InstanceItemAnn . mkSpanAnnotation) 
 instanceDataFamilyInstParser :: TokParser InstanceDeclItem
 instanceDataFamilyInstParser = withSpanAnn (InstanceItemAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordData
-  _ <- optionalTok TkKeywordInstance
+  hasInstance <- optionalTok TkKeywordInstance
+  when hasInstance discardLastToken
   (_, head') <- typeFamilyLhsParser
   kind <- familyResultKindParser
   (constructors, derivingClauses) <- gadtDataDeclParser <|> traditionalDataDeclParser
@@ -657,7 +660,8 @@ instanceDataFamilyInstParser = withSpanAnn (InstanceItemAnn . mkSpanAnnotation) 
 instanceNewtypeFamilyInstParser :: TokParser InstanceDeclItem
 instanceNewtypeFamilyInstParser = withSpanAnn (InstanceItemAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordNewtype
-  _ <- optionalTok TkKeywordInstance
+  hasInstance <- optionalTok TkKeywordInstance
+  when hasInstance discardLastToken
   (_, head') <- typeFamilyLhsParser
   kind <- familyResultKindParser
   expectedTok TkReservedEquals
@@ -712,7 +716,7 @@ typeSigOrPatternTypeSigDeclParser =
 defaultDeclParser :: TokParser Decl
 defaultDeclParser = withSpanAnn (DeclAnn . mkSpanAnnotation) $ do
   expectedTok TkKeywordDefault
-  DeclDefault <$> parens (typeParser `MP.sepEndBy` expectedTok TkSpecialComma)
+  DeclDefault <$> parens (typeParser `sepEndByDiscard` expectedTok TkSpecialComma)
 
 -- | Report core general declaration:
 --
@@ -802,15 +806,17 @@ classFundepParser = withSpan $ do
         functionalDependencyDetermined = determines
       }
 
+-- An empty @where@ clause is not in the AST, so its tokens are discarded.
 classWhereClauseParser :: TokParser [ClassDeclItem]
-classWhereClauseParser = do
+classWhereClauseParser = discardIfEmpty $ do
   expectedTok TkKeywordWhere
   bracedSemiSep classDeclItemParser
     <|> plainSemiSep1 classDeclItemParser
     <|> pure []
 
+-- An empty @where@ clause is not in the AST, so its tokens are discarded.
 whereClauseItemsParser :: TokParser a -> TokParser [a]
-whereClauseItemsParser itemParser = do
+whereClauseItemsParser itemParser = discardIfEmpty $ do
   expectedTok TkKeywordWhere
   bracedSemiSep itemParser <|> plainSemiSep1 itemParser <|> pure []
 
@@ -898,8 +904,9 @@ standaloneDerivingDeclParser = withSpanAnn (DeclAnn . mkSpanAnnotation) $ do
           standaloneDerivingHead = derivingHead
         }
 
+-- An empty @where@ clause is not in the AST, so its tokens are discarded.
 instanceWhereClauseParser :: TokParser [InstanceDeclItem]
-instanceWhereClauseParser = do
+instanceWhereClauseParser = discardIfEmpty $ do
   expectedTok TkKeywordWhere
   bracedSemiSep instanceDeclItemParser
     <|> plainSemiSep1 instanceDeclItemParser
@@ -1358,20 +1365,27 @@ declHeadParserWith opParser =
       rhs <- declTypeParamParser
       pure (InfixBinderHead lhs op rhs [])
 
+    -- The AST keeps these parentheses only when more parameters follow.
     parenthesizedInfixDeclHeadParser = do
+      openPosition <- tracePosition
       expectedTok TkSpecialLParen
       lhs <- declTypeParamParser
       op <- opParser
       rhs <- declTypeParamParser
+      closePosition <- tracePosition
       expectedTok TkSpecialRParen
       tailParams <- MP.many declTypeParamParser
+      when (null tailParams) $ do
+        discardTraceEntryAt openPosition
+        discardTraceEntryAt closePosition
       pure (InfixBinderHead lhs op rhs tailParams)
 
+    -- The AST does not keep these parentheses.
     parenthesizedPrefixDeclHeadParser = do
-      expectedTok TkSpecialLParen
+      discardTok TkSpecialLParen
       name <- constructorUnqualifiedNameParser
       params <- MP.some declTypeParamParser
-      expectedTok TkSpecialRParen
+      discardTok TkSpecialRParen
       tailParams <- MP.many declTypeParamParser
       pure (PrefixBinderHead name (params <> tailParams))
 
@@ -1513,7 +1527,7 @@ derivingClauseParser = do
     _ -> pure (DerivingClause (viaStrategy <|> strategy) classes)
   where
     singleClass = Left <$> constructorNameParser
-    parenClasses = Right <$> parens (typeParser `MP.sepEndBy` expectedTok TkSpecialComma)
+    parenClasses = Right <$> parens (typeParser `sepEndByDiscard` expectedTok TkSpecialComma)
 
 derivingViaTypeParser :: TokParser Type
 derivingViaTypeParser = do
@@ -1603,7 +1617,7 @@ dataConInfixParser forallVars context = do
       pure name
 
 recordFieldsParser :: TokParser [FieldDecl]
-recordFieldsParser = braces (recordFieldDeclParser `MP.sepEndBy` expectedTok TkSpecialComma)
+recordFieldsParser = braces (recordFieldDeclParser `sepEndByDiscard` expectedTok TkSpecialComma)
 
 recordFieldDeclParser :: TokParser FieldDecl
 recordFieldDeclParser = withSpan $ do
@@ -1766,7 +1780,7 @@ patSynRecordOrPrefixLhsParser = do
 
 -- | Parse the record fields of a pattern synonym: @{field1, field2, ...}@
 patSynRecordFieldsParser :: TokParser [Text]
-patSynRecordFieldsParser = braces (lowerIdentifierParser `MP.sepEndBy` expectedTok TkSpecialComma)
+patSynRecordFieldsParser = braces (lowerIdentifierParser `sepEndByDiscard` expectedTok TkSpecialComma)
 
 -- | Parse the direction marker and RHS pattern of a pattern synonym.
 patSynDirAndPatParser :: UnqualifiedName -> TokParser (PatSynDir, Pattern)

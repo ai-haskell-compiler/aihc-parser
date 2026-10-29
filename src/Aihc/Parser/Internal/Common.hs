@@ -12,6 +12,13 @@ module Aihc.Parser.Internal.Common
     tokenKindDispatch,
     optionalTok,
     optionalTokThen,
+    discardTok,
+    discardLastToken,
+    discardIfEmpty,
+    discarding,
+    tracePosition,
+    discardTraceEntryAt,
+    sepEndByDiscard,
     eofTok,
     varIdTok,
     tokenSatisfy,
@@ -88,12 +95,12 @@ where
 
 import Aihc.Parser.Lex (LayoutState (..), LexToken (..), LexTokenKind (..), TokenOrigin (..), closeImplicitLayoutContext)
 import Aihc.Parser.Syntax
-import Aihc.Parser.Types (ParserErrorComponent (..), TokStream (..), mkFoundToken, setTokStreamLayout, setTokStreamPendingPragmas, sourcePosSpan, tokStreamExtensionSet)
-import Control.Monad (guard)
+import Aihc.Parser.Types (ParserErrorComponent (..), TokStream (..), Trace (..), discardLastTraceEntry, discardTraceEntriesFrom, discardTraceRange, mkFoundToken, setTokStreamLayout, setTokStreamPendingPragmas, sourcePosSpan, tokStreamExtensionSet)
+import Control.Monad (guard, unless, when)
 import Data.Char (isUpper)
 import Data.Functor (($>))
 import Data.List.NonEmpty qualified as NE
-import Data.Maybe (catMaybes)
+import Data.Maybe (isJust, maybeToList)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -239,6 +246,66 @@ optionalTokThen expected parser =
       then Just <$> (expectedTok expected *> parser)
       else pure Nothing
 {-# INLINE optionalTokThen #-}
+
+-- | Mark the token that the parser took last as discarded in the token trace.
+-- Use it for a token that the AST does not keep, for example a trailing comma.
+-- Two inputs with the same AST then have the same trace without the discarded
+-- tokens.
+discardLastToken :: TokParser ()
+discardLastToken =
+  MP.updateParserState (\s -> s {MP.stateInput = discardLastTraceEntry (MP.stateInput s)})
+
+-- | Run a parser. If its result is empty, mark each token that it took as
+-- discarded in the token trace. Use it for an optional clause that the AST
+-- does not keep when it is empty, for example @where {}@.
+discardIfEmpty :: TokParser [a] -> TokParser [a]
+discardIfEmpty parser = do
+  start <- traceLengthNow
+  items <- parser
+  when (null items) $
+    MP.updateParserState (\s -> s {MP.stateInput = discardTraceEntriesFrom start (MP.stateInput s)})
+  pure items
+
+-- | Run a parser, and mark each token that it took as discarded in the token
+-- trace.
+discarding :: TokParser a -> TokParser a
+discarding parser = do
+  start <- traceLengthNow
+  result <- parser
+  MP.updateParserState (\s -> s {MP.stateInput = discardTraceEntriesFrom start (MP.stateInput s)})
+  pure result
+
+traceLengthNow :: TokParser Int
+traceLengthNow = maybe 0 traceLength . tokStreamTrace <$> MP.getInput
+
+-- | The position in the token trace of the next token that the parser takes.
+tracePosition :: TokParser Int
+tracePosition = traceLengthNow
+
+-- | Mark the trace entry at a position from 'tracePosition' as discarded.
+discardTraceEntryAt :: Int -> TokParser ()
+discardTraceEntryAt position =
+  MP.updateParserState (\s -> s {MP.stateInput = discardTraceRange position (position + 1) (MP.stateInput s)})
+
+-- | Take a token of the given kind that the AST does not keep.
+discardTok :: LexTokenKind -> TokParser ()
+discardTok expected = expectedTok expected *> discardLastToken
+
+-- | Like 'MP.sepEndBy'. The AST does not keep a trailing separator, so the
+-- token trace marks it as discarded.
+sepEndByDiscard :: TokParser a -> TokParser sep -> TokParser [a]
+sepEndByDiscard p sep = sepEndBy1Discard p sep <|> pure []
+
+sepEndBy1Discard :: TokParser a -> TokParser sep -> TokParser [a]
+sepEndBy1Discard p sep = do
+  x <- p
+  rest <- MP.option [] $ do
+    _ <- sep
+    xs <- sepEndByDiscard p sep
+    -- An empty tail takes no token, so the separator is the newest entry.
+    when (null xs) discardLastToken
+    pure xs
+  pure (x : rest)
 
 -- | Match the end-of-file token.
 --
@@ -665,7 +732,7 @@ closeAndExpectRBrace =
     if closed then expectedTok TkSpecialRBrace else MP.empty
 
 skipSemicolons :: TokParser ()
-skipSemicolons = MP.skipMany (expectedTok TkSpecialSemicolon)
+skipSemicolons = MP.skipMany (discardTok TkSpecialSemicolon)
 
 bracedSemiSep :: TokParser a -> TokParser [a]
 bracedSemiSep = braces . layoutSemiSep
@@ -681,9 +748,33 @@ plainSemiSep = layoutSemiSep
 plainSemiSep1 :: TokParser a -> TokParser [a]
 plainSemiSep1 = layoutSemiSep1
 
+-- | Parse items separated by semicolons. An item can be empty.
+--
+-- The AST keeps only the items. Thus the token trace keeps a semicolon only
+-- if an item comes before it and an item follows it directly. Each other
+-- semicolon is marked as discarded. Then a list of @n@ items always keeps
+-- @n - 1@ semicolons.
 layoutSemiSep :: TokParser a -> TokParser [a]
-layoutSemiSep parser =
-  catMaybes <$> MP.sepBy (MP.optional parser) (expectedTok TkSpecialSemicolon)
+layoutSemiSep parser = do
+  first <- MP.optional parser
+  go (isJust first) (maybeToList first)
+  where
+    go seenItem acc = do
+      -- 'MP.optional' adds the semicolon to the expected tokens of an error,
+      -- as 'MP.sepBy' did.
+      hasSemicolon <- isJust <$> MP.optional (expectedTok TkSpecialSemicolon)
+      if not hasSemicolon
+        then pure (reverse acc)
+        else do
+          unless seenItem discardLastToken
+          next <- MP.optional parser
+          case next of
+            Nothing -> do
+              -- An empty item takes no token, so the semicolon is the newest
+              -- entry.
+              when seenItem discardLastToken
+              go seenItem acc
+            Just item -> go True (item : acc)
 
 layoutSemiSep1 :: TokParser a -> TokParser [a]
 layoutSemiSep1 parser = do
@@ -855,7 +946,7 @@ contextItemsParserWith typeParser typeAtomParser =
   MP.try parenthesizedContextItemsParser <|> fmap pure (contextItemParserWith typeParser typeAtomParser)
   where
     parenthesizedContextItemsParser = withSpanAnn annotateSingleItem $ do
-      items <- parens (listContextItemParser `MP.sepEndBy` expectedTok TkSpecialComma)
+      items <- parens (listContextItemParser `sepEndByDiscard` expectedTok TkSpecialComma)
       guardNotFollowedByConstraintInfixOp
       case items of
         [] -> fail "empty constraint list in parens"
@@ -1117,7 +1208,8 @@ recordFieldsWithWildcardsParser fieldsParser = do
       if not hasDotDot
         then pure (fields, False)
         else do
-          _ <- optionalTok TkSpecialComma
+          hasComma <- optionalTok TkSpecialComma
+          when hasComma discardLastToken
           pure (fields, True)
     else pure (fields, False)
 
@@ -1160,7 +1252,10 @@ layoutSepEndBy1 p sep = do
   x <- p
   rest <- MP.option [] $ do
     _ <- layoutSep sep
-    layoutSepEndBy p sep
+    xs <- layoutSepEndBy p sep
+    -- An empty tail takes no token, so the separator is the newest entry.
+    when (null xs) discardLastToken
+    pure xs
   pure (x : rest)
 
 -- | Like Megaparsec's 'MP.sepBy1' but implements the parse-error rule for

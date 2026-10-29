@@ -21,6 +21,7 @@ import Aihc.Parser.Internal.Common
 import {-# SOURCE #-} Aihc.Parser.Internal.Expr (exprParser)
 import Aihc.Parser.Lex (LexTokenKind (..), lexTokenKind, lexTokenSpan, lexTokenText)
 import Aihc.Parser.Syntax
+import Control.Monad (when)
 import Data.Char (isLower)
 import Data.Functor (($>), (<&>))
 import Data.Text qualified as T
@@ -199,10 +200,17 @@ linearArrowKindParser =
 -- from @a % 1 -> b@ (type operator applied to @a@ and @1@, then unrestricted arrow).
 multiplicityAnnotatedArrowParser :: TokParser ArrowKind
 multiplicityAnnotatedArrowParser = do
+  start <- tracePosition
   expectedTok TkPrefixPercent
   mult <- typeAtomParser
+  arrowPosition <- tracePosition
   expectedTok TkReservedRightArrow
-  pure (multiplicityToArrowKind mult)
+  let arrowKind = multiplicityToArrowKind mult
+  -- The AST does not tell @%1 ->@ from @⊸@. Keep only the arrow in the
+  -- token trace, so both spellings give the same trace.
+  when (arrowKind == ArrowLinear) $
+    mapM_ discardTraceEntryAt [start .. arrowPosition - 1]
+  pure arrowKind
 
 multiplicityToArrowKind :: Type -> ArrowKind
 multiplicityToArrowKind ty =

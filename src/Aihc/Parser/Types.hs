@@ -7,11 +7,17 @@
 
 module Aihc.Parser.Types
   ( TokStream (..),
+    TraceEntry (..),
+    Trace (..),
     mkTokStream,
     mkTokStreamModule,
     mkTokStreamFromTokens,
     setTokStreamLayout,
     setTokStreamPendingPragmas,
+    enableTokStreamTrace,
+    discardLastTraceEntry,
+    discardTraceEntriesFrom,
+    discardTraceRange,
     runTokStreamParser,
     ParserErrorComponent (..),
     FoundToken (..),
@@ -101,6 +107,10 @@ data TokStream = TokStream
     -- | Whether this stream has already emitted TkEOF.
     -- After EOF is emitted, 'take1_' returns Nothing.
     tokStreamEOFEmitted :: !Bool,
+    -- | The tokens that the parser took from this stream, newest first. The
+    -- trace is 'Nothing' unless a caller enables it with
+    -- 'enableTokStreamTrace', because a trace keeps every token alive.
+    tokStreamTrace :: !(Maybe Trace),
     -- | Memoized result of stepping this stream by one token. Lookahead and
     -- backtracking step the same position many times; sharing the successor
     -- means the layout transition for each raw token runs once.
@@ -109,6 +119,22 @@ data TokStream = TokStream
     -- 'buildTokStream' so this field stays consistent.
     tokStreamNext :: Maybe (LexToken, TokStream)
   }
+
+-- | One token that the parser took from the stream. The token can be real or
+-- virtual. A discarded token is a token that the parser took but did not keep
+-- in the AST, for example a trailing comma or an extra semicolon.
+data TraceEntry = TraceEntry
+  { traceToken :: !LexToken,
+    traceDiscarded :: !Bool
+  }
+  deriving (Eq, Show, Generic, NFData)
+
+-- | The entries of a token trace, newest first, with their count.
+data Trace = Trace
+  { traceLength :: !Int,
+    traceEntries :: [TraceEntry]
+  }
+  deriving (Eq, Show, Generic, NFData)
 
 -- -- Manual Eq instance — we skip tokStreamRawTokens since list position is not
 -- -- efficiently comparable and Megaparsec tracks offset separately.
@@ -158,6 +184,7 @@ mkTokStream sourceName exts input =
         Nothing
         (mkExtensionSet exts)
         False
+        Nothing
 
 -- | Create a TokStream for parsing full modules (with module-body layout).
 -- Also bootstraps LANGUAGE pragma extensions from the module header.
@@ -172,6 +199,7 @@ mkTokStreamModule sourceName baseExts input =
         Nothing
         (mkExtensionSet effectiveExts)
         False
+        Nothing
   where
     headerSettings = readModuleHeaderExtensions input
     effectiveExts = applyImpliedExtensions (foldr applyExtensionSetting baseExts headerSettings)
@@ -189,6 +217,7 @@ mkTokStreamFromTokens toks =
         Nothing
         (mkExtensionSet [])
         False
+        Nothing
 
 -- | Replace the layout state and buffer of a stream. The result is a fresh
 -- stream with a consistent memoized successor.
@@ -202,6 +231,7 @@ setTokStreamLayout layoutState buffer ts =
     (tokStreamPrevToken ts)
     (tokStreamExtensionSet ts)
     (tokStreamEOFEmitted ts)
+    (tokStreamTrace ts)
 
 -- | Replace the pending hidden pragmas of a stream.
 setTokStreamPendingPragmas :: [Pragma] -> TokStream -> TokStream
@@ -214,10 +244,71 @@ setTokStreamPendingPragmas pendingPragmas ts =
     (tokStreamPrevToken ts)
     (tokStreamExtensionSet ts)
     (tokStreamEOFEmitted ts)
+    (tokStreamTrace ts)
+
+-- | Start the trace of a stream. The trace then records each token that the
+-- parser takes. Use 'discardLastTraceEntry' to mark a token that the AST does
+-- not keep.
+enableTokStreamTrace :: TokStream -> TokStream
+enableTokStreamTrace ts =
+  buildTokStream
+    (tokStreamRawTokens ts)
+    (tokStreamLayoutState ts)
+    (tokStreamBuffer ts)
+    (tokStreamPendingPragmas ts)
+    (tokStreamPrevToken ts)
+    (tokStreamExtensionSet ts)
+    (tokStreamEOFEmitted ts)
+    (Just (Trace 0 []))
+
+-- | Mark the newest trace entry as discarded. This has no effect when the
+-- trace is not enabled.
+discardLastTraceEntry :: TokStream -> TokStream
+discardLastTraceEntry ts =
+  case tokStreamTrace ts of
+    Just (Trace len _) -> discardTraceEntriesFrom (len - 1) ts
+    Nothing -> ts
+
+-- | Mark each trace entry from the given position as discarded. Position 0 is
+-- the oldest entry. Use the 'traceLength' from before a parser to mark each
+-- token that the parser took. This has no effect when the trace is not
+-- enabled.
+discardTraceEntriesFrom :: Int -> TokStream -> TokStream
+discardTraceEntriesFrom start ts =
+  case tokStreamTrace ts of
+    Just (Trace len _) -> discardTraceRange start len ts
+    Nothing -> ts
+
+-- | Mark the trace entries at positions @start@ to @end - 1@ as discarded.
+-- Position 0 is the oldest entry. This has no effect when the trace is not
+-- enabled.
+discardTraceRange :: Int -> Int -> TokStream -> TokStream
+discardTraceRange start end ts =
+  case tokStreamTrace ts of
+    Just (Trace len entries)
+      | start < end && start < len ->
+          buildTokStream
+            (tokStreamRawTokens ts)
+            (tokStreamLayoutState ts)
+            (tokStreamBuffer ts)
+            (tokStreamPendingPragmas ts)
+            (tokStreamPrevToken ts)
+            (tokStreamExtensionSet ts)
+            (tokStreamEOFEmitted ts)
+            (Just (Trace len (markRange entries)))
+      where
+        -- The entries are newest first, so position p is at index len - 1 - p.
+        newest = len - min end len
+        count = min end len - start
+        markRange entries' =
+          let (newer, rest) = splitAt newest entries'
+              (marked, older) = splitAt count rest
+           in newer <> map (\entry -> entry {traceDiscarded = True}) marked <> older
+    _ -> ts
 
 -- | Build a stream whose memoized successor is computed from its fields.
-buildTokStream :: [LexToken] -> LayoutState -> [LexToken] -> [Pragma] -> Maybe LexToken -> ExtensionSet -> Bool -> TokStream
-buildTokStream rawTokens layoutState buffer pendingPragmas prevToken extensionSet eofEmitted =
+buildTokStream :: [LexToken] -> LayoutState -> [LexToken] -> [Pragma] -> Maybe LexToken -> ExtensionSet -> Bool -> Maybe Trace -> TokStream
+buildTokStream rawTokens layoutState buffer pendingPragmas prevToken extensionSet eofEmitted trace =
   let ts =
         TokStream
           { tokStreamRawTokens = rawTokens,
@@ -227,6 +318,7 @@ buildTokStream rawTokens layoutState buffer pendingPragmas prevToken extensionSe
             tokStreamPrevToken = prevToken,
             tokStreamExtensionSet = extensionSet,
             tokStreamEOFEmitted = eofEmitted,
+            tokStreamTrace = trace,
             tokStreamNext = stepOne ts
           }
    in ts
@@ -234,13 +326,13 @@ buildTokStream rawTokens layoutState buffer pendingPragmas prevToken extensionSe
 -- | Advance through layout and hidden tokens until the stream is ready for
 -- 'stepOne'. Keeping the stream fields separate lets a token step normalize
 -- its successor without first allocating an intermediate 'TokStream'.
-normalizeTokStreamParts :: [LexToken] -> LayoutState -> [LexToken] -> [Pragma] -> Maybe LexToken -> ExtensionSet -> Bool -> TokStream
-normalizeTokStreamParts rawTokens layoutState buffer pendingPragmas prevToken extensionSet eofEmitted
+normalizeTokStreamParts :: [LexToken] -> LayoutState -> [LexToken] -> [Pragma] -> Maybe LexToken -> ExtensionSet -> Bool -> Maybe Trace -> TokStream
+normalizeTokStreamParts rawTokens layoutState buffer pendingPragmas prevToken extensionSet eofEmitted trace
   | eofEmitted = finish rawTokens layoutState buffer pendingPragmas
   | otherwise = go rawTokens layoutState buffer pendingPragmas
   where
     finish rawTokens' layoutState' buffer' pendingPragmas' =
-      buildTokStream rawTokens' layoutState' buffer' pendingPragmas' prevToken extensionSet eofEmitted
+      buildTokStream rawTokens' layoutState' buffer' pendingPragmas' prevToken extensionSet eofEmitted trace
 
     go rawTokens' layoutState' buffer' pendingPragmas' =
       case buffer' of
@@ -300,6 +392,7 @@ stepOne ts
                   (Just tok)
                   (tokStreamExtensionSet ts)
                   isEOF
+                  (fmap (\(Trace len entries) -> Trace (len + 1) (TraceEntry tok False : entries)) (tokStreamTrace ts))
            in Just (tok, next)
         [] ->
           Nothing
@@ -352,7 +445,7 @@ runTokStreamParser parser sourceName ts =
               },
           MP.stateParseErrors = []
         }
-    detachedStream = buildTokStream [] (tokStreamLayoutState ts) [] [] Nothing (tokStreamExtensionSet ts) True
+    detachedStream = buildTokStream [] (tokStreamLayoutState ts) [] [] Nothing (tokStreamExtensionSet ts) True Nothing
 
 instance Stream TokStream where
   type Token TokStream = LexToken
