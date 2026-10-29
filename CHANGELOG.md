@@ -27,6 +27,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   expression still breaks at the same points as before. Layout blocks
   (`do`, `case`, `where`, `let`, guards, and multi-way `if`) still start new
   lines where the layout rule needs them.
+- When a function application does not fit, the pretty-printer puts as many
+  arguments on a line as fit. Before, it put each argument on its own line.
+  After an argument that ends with a layout block, a new line still starts.
+- When a record construction, a record update, a list, or a tuple does not
+  fit, the pretty-printer starts a new line after each comma. Before, it kept
+  all items on one line.
 
 ### Fixed
 

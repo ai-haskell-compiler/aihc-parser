@@ -341,6 +341,8 @@ buildTests = do
             testCase "parenthesizes multi-way if view expressions ending with type signatures in decls" test_viewExprMultiWayIfTypeSigParens,
             testCase "parenthesizes infix view expressions in lambda-cases" test_viewExprInfixLambdaCasesParens,
             testCase "leaves block infix lhs view expressions bare" test_viewExprBlockInfixLhsNoParens,
+            testCase "breaks a long record after each comma" test_prettyLongRecordBreaksAfterCommas,
+            testCase "fills the arguments of a long application" test_prettyLongApplicationFillsArguments,
             testCase "leaves view expression block arguments bare" test_viewExprBlockArgumentNoParens,
             testCase "leaves multi-way-if app infix lhs view expressions bare" test_viewExprMultiWayIfAppInfixLhsNoParens,
             testCase "parenthesizes non-final let block arguments in view expressions" test_viewExprNonfinalLetBlockArgumentParens,
@@ -1866,6 +1868,18 @@ test_viewExprInfixLambdaCasesParens = do
   assertParsedStrippedDeclShapeRoundTrip config "_ = [] where _ `a` (((\\case _ -> []) + []) -> _) = []"
   assertParsedStrippedDeclShapeRoundTrip config "_ = [] where ((do [] `a` []) -> _) = []"
   assertParsedStrippedPatternShapeRoundTrip config "(((if | [] -> []) `a` []) -> _)"
+
+test_prettyLongRecordBreaksAfterCommas :: Assertion
+test_prettyLongRecordBreaksAfterCommas =
+  assertParsedModulePrettyContains
+    "module M where\nr = R {fieldOne = valueOne, fieldTwo = valueTwo, fieldThree = valueThree, fieldFour = valueFour}\n"
+    "r = R {fieldOne = valueOne,\n  fieldTwo = valueTwo,\n  fieldThree = valueThree,\n  fieldFour = valueFour}"
+
+test_prettyLongApplicationFillsArguments :: Assertion
+test_prettyLongApplicationFillsArguments =
+  assertParsedModulePrettyContains
+    "module M where\nf = someFunction argumentOne argumentTwo argumentThree argumentFour argumentFive argumentSix\n"
+    "f = someFunction argumentOne argumentTwo argumentThree argumentFour argumentFive\n  argumentSix"
 
 test_viewExprBlockInfixLhsNoParens :: Assertion
 test_viewExprBlockInfixLhsNoParens = do

@@ -55,6 +55,7 @@ import Prettyprinter
     parens,
     punctuate,
     semi,
+    softline,
     vsep,
     (<+>),
   )
@@ -1306,9 +1307,9 @@ prettyExpr expr =
         )
     EArithSeq seqInfo -> prettyArithSeq seqInfo
     ERecordCon name fields hasWildcard ->
-      prettyPrefixName name <+> braces (hsep (punctuate comma (map prettyBinding fields ++ [".." | hasWildcard])))
+      prettyPrefixName name <+> braces (prettyCommaBlock (map prettyBinding fields ++ [".." | hasWildcard]))
     ERecordUpd base fields ->
-      prettyExpr base <+> braces (hsep (punctuate comma (map prettyBinding fields)))
+      prettyExpr base <+> braces (prettyCommaBlock (map prettyBinding fields))
     EGetField base field ->
       prettyExpr base <> "." <> prettyName field
     EGetFieldProjection fields ->
@@ -1346,18 +1347,49 @@ prettyApp = prettyAppWith prettyExpr
 prettyAppWith :: (Expr -> Doc ann) -> Expr -> Doc ann
 prettyAppWith prettyFn expr =
   let (fn, args) = flattenApps expr
-   in group (prettyFn fn <> nest 2 (line <> vsep (map prettyExpr args)))
+   in prettyFn fn <> nest 2 (softline <> fillArguments args)
   where
+    -- Put as many arguments on a line as fit. After an argument that ends
+    -- with a layout block, start a new line: text on the same line goes into
+    -- the block.
+    fillArguments [] = mempty
+    fillArguments [arg] = prettyExpr arg
+    fillArguments (arg : rest) =
+      prettyExpr arg <> (if endsWithLayoutBlock arg then hardline else softline) <> fillArguments rest
     flattenApps = go []
     go args (EAnn _ sub) = go args sub
     go args (EApp fn arg) = go (arg : args) fn
     go args root = (root, args)
 
+-- | The printed expression ends with a layout block that has no closing token.
+endsWithLayoutBlock :: Expr -> Bool
+endsWithLayoutBlock expr =
+  case expr of
+    EAnn _ sub -> endsWithLayoutBlock sub
+    ECase {} -> True
+    EDo {} -> True
+    ELambdaCase {} -> True
+    ELambdaCases {} -> True
+    EMultiWayIf {} -> True
+    ELetDecls _ body -> endsWithLayoutBlock body
+    ELambdaPats _ body -> endsWithLayoutBlock body
+    EIf _ _ no -> endsWithLayoutBlock no
+    EApp _ arg -> endsWithLayoutBlock arg
+    EInfix _ _ rhs -> endsWithLayoutBlock rhs
+    ENegate inner -> endsWithLayoutBlock inner
+    EProc {} -> True
+    _ -> False
+
 prettyCommaSeparated :: (a -> Doc ann) -> [a] -> Doc ann
 prettyCommaSeparated render items =
   case map render items of
     [] -> mempty
-    rendered -> hsep (punctuate comma rendered)
+    rendered -> prettyCommaBlock rendered
+
+-- | Items separated by commas. When they do not fit on the line, each item
+-- after the first starts a new line.
+prettyCommaBlock :: [Doc ann] -> Doc ann
+prettyCommaBlock items = group (nest 2 (concatWith (\x y -> x <> comma <> line <> y) items))
 
 prettyBarSeparated :: [Doc ann] -> Doc ann
 prettyBarSeparated items =
@@ -1543,7 +1575,7 @@ prettyExprAtStatementStart expr =
     ESectionL lhs op -> group (nest 2 (prettyExprAtStatementStart lhs) <> nest 1 (spacedLine <> prettyNameInfixOp op))
     ETypeSig inner ty -> group (nest 2 (prettyExprAtStatementStart inner) <> nest 1 (line <> "::" <+> prettyType ty))
     ERecordUpd base fields ->
-      prettyExprAtStatementStart base <+> braces (hsep (punctuate comma (map prettyBinding fields)))
+      prettyExprAtStatementStart base <+> braces (prettyCommaBlock (map prettyBinding fields))
     EGetField base field ->
       prettyExprAtStatementStart base <> "." <> prettyName field
     _ -> prettyExpr expr
