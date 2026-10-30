@@ -323,7 +323,7 @@ recordFieldPatternParser = do
 -- | Parse the contents of record pattern braces, supporting RecordWildCards ".."
 recordPatternFieldListParser :: TokParser ([RecordField Pattern], Bool)
 recordPatternFieldListParser =
-  recordFieldsWithWildcardsParser (recordFieldPatternParser `MP.sepEndBy` expectedTok TkSpecialComma)
+  recordFieldsWithWildcardsParser (recordFieldPatternParser `sepEndByDiscard` expectedTok TkSpecialComma)
 
 listPatternParser :: TokParser Pattern
 listPatternParser = withSpanAnn (PAnn . mkSpanAnnotation) $ do

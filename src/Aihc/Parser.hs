@@ -13,6 +13,9 @@
 module Aihc.Parser
   ( -- * Parsing modules
     parseModule,
+    parseModuleWithTrace,
+    TraceEntry (..),
+    tokenKindWithoutSpacing,
 
     -- * Configuration
     ParserConfig (..),
@@ -38,6 +41,7 @@ import Aihc.Parser.Internal.Expr (exprParser)
 import Aihc.Parser.Internal.Module (moduleParser)
 import Aihc.Parser.Internal.Pattern (patternParser)
 import Aihc.Parser.Internal.Type (typeParser, typeSignatureParser)
+import Aihc.Parser.Lex (LexTokenKind (..))
 import Aihc.Parser.Pretty ()
 import Aihc.Parser.Syntax (Decl, Expr, Extension, Module (..), Pattern, SourceSpan, Type, applyImpliedExtensions, sourceSpanEndCol, sourceSpanSourceName, sourceSpanStartCol, sourceSpanStartLine, sourceSpanStartOffset, pattern SourceSpan)
 import Aihc.Parser.Types
@@ -49,6 +53,7 @@ import Data.Text.Encoding qualified as TE
 import Data.Word (Word8)
 import Prettyprinter (Doc, colon, defaultLayoutOptions, layoutPretty, pretty, vcat)
 import Prettyprinter.Render.String (renderString)
+import Text.Megaparsec qualified as MP
 
 -- $setup
 -- >>> :set -XOverloadedStrings
@@ -143,7 +148,47 @@ parseDecl = runEntry mkTokStream (declParser <* eofTok)
 -- Nothing
 parseModule :: ParserConfig -> Text -> ([(SourceSpan, Text)], Module)
 parseModule cfg input =
-  case runTokStreamParser parser sourceName (mkTokStreamModule sourceName exts input) of
+  let (errs, modu, _) = parseModuleWith id cfg input
+   in (errs, modu)
+
+-- | Parse a module and return the token trace with it.
+--
+-- The trace is each token that the parser took, in order. It contains real
+-- tokens and virtual layout tokens, also the virtual close braces that the
+-- parser inserts for the parse-error rule. Comments and pragmas are not in
+-- the trace. A token that the parser took but did not keep in the AST, for
+-- example a trailing comma, has 'traceDiscarded' set.
+--
+-- Two modules with the same AST have the same trace token kinds when the
+-- discarded entries are removed. A formatter can use this to pair the tokens
+-- of a source file with the tokens of its pretty-printed form.
+parseModuleWithTrace :: ParserConfig -> Text -> ([(SourceSpan, Text)], Module, [TraceEntry])
+parseModuleWithTrace = parseModuleWith enableTokStreamTrace
+
+-- | Map a token kind to the kind that it has with spaces around it.
+--
+-- The lexer gives some operators a different kind when no space separates
+-- them from the next or the previous token. For example, @(%1)@ has
+-- 'TkPrefixPercent' but @(% 1)@ has @'TkVarSym' "%"@. The text and the AST
+-- are the same, so compare trace entries with this function. It also maps
+-- the linear arrow @⊸@ to @->@, because the trace of @%1 ->@ keeps only the
+-- arrow.
+tokenKindWithoutSpacing :: LexTokenKind -> LexTokenKind
+tokenKindWithoutSpacing kind =
+  case kind of
+    TkPrefixMinus -> TkMinusOperator
+    TkPrefixBang -> TkVarSym "!"
+    TkPrefixTilde -> TkVarSym "~"
+    TkPrefixPercent -> TkVarSym "%"
+    TkRecordDot -> TkVarSym "."
+    TkTypeApp -> TkVarSym "@"
+    TkReservedAt -> TkVarSym "@"
+    TkLinearArrow -> TkReservedRightArrow
+    _ -> kind
+
+parseModuleWith :: (TokStream -> TokStream) -> ParserConfig -> Text -> ([(SourceSpan, Text)], Module, [TraceEntry])
+parseModuleWith prepare cfg input =
+  case runTokStreamParser parser sourceName (prepare (mkTokStreamModule sourceName exts input)) of
     Left bundle ->
       ( parseErrorBundleToSpannedText sourceName errorStream bundle,
         Module
@@ -152,10 +197,11 @@ parseModule cfg input =
             moduleLanguagePragmas = [],
             moduleImports = [],
             moduleDecls = []
-          }
+          },
+        []
       )
-    Right (errs, modu) ->
-      (parseErrorsToSpannedText sourceName errorStream errs, modu)
+    Right (errs, modu, trace) ->
+      (parseErrorsToSpannedText sourceName errorStream errs, modu, trace)
   where
     sourceName = parserSourceName cfg
     exts = applyImpliedExtensions (parserExtensions cfg)
@@ -163,7 +209,8 @@ parseModule cfg input =
     parser = do
       modu <- moduleParser
       errs <- drainParseErrors
-      pure (errs, modu)
+      ts <- MP.getInput
+      pure (errs, modu, maybe [] (reverse . traceEntries) (tokStreamTrace ts))
 
 -- | Run a parser over freshly lexed input. Errors are located on a stream
 -- built again from the input, so the parse itself does not retain the token

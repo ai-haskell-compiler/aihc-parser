@@ -24,7 +24,9 @@ import Aihc.Parser.Internal.Decl (declParser)
 import Aihc.Parser.Internal.Import (importDeclParser, languagePragmaParser, moduleHeaderParser)
 import Aihc.Parser.Lex (LexTokenKind (..), lexTokenKind)
 import Aihc.Parser.Syntax (Decl, ImportDecl, Module (..), mkSpanAnnotation)
-import Control.Monad (void)
+import Aihc.Parser.Types (TokStream (..))
+import Control.Monad (void, when)
+import Data.Maybe (isJust)
 import Text.Megaparsec qualified as MP
 
 data RecoverParseStep a
@@ -40,8 +42,8 @@ moduleParser = do
   let !startInput = MP.stateInput startState
       !startOffset = MP.stateOffset startState
       !inputStart = MP.pstateSourcePos (MP.statePosState startState)
-  languagePragmas <- MP.many (languagePragmaParser <* MP.many (expectedTok TkSpecialSemicolon))
-  mHeader <- MP.optional (moduleHeaderParser <* MP.many (expectedTok TkSpecialSemicolon))
+  languagePragmas <- MP.many (languagePragmaParser <* skipSemicolons)
+  mHeader <- MP.optional (moduleHeaderParser <* skipSemicolons)
   expectedTok TkSpecialLBrace
   imports <- importDeclsWithRecovery
   (decls, finalState) <-
@@ -52,6 +54,11 @@ moduleParser = do
           <* MP.lookAhead eofTok
       )
   MP.updateParserState (\state -> state {MP.stateParseErrors = MP.stateParseErrors finalState})
+  -- The declarations were parsed in a separate run. With a token trace, take
+  -- the stream from the end of that run, so the trace has their tokens. This
+  -- forces the declarations, so only a traced parse does it.
+  when (isJust (tokStreamTrace startInput)) $
+    MP.updateParserState (\state -> state {MP.stateInput = MP.stateInput finalState})
   let moduleSpan = consumedSpan inputStart startInput startOffset (MP.stateInput finalState) (MP.stateOffset finalState)
   pure
     Module
