@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `parseModuleWithTrace` parses a module and also returns its token trace.
+  The trace has each token that the parser took, in order. It has real
+  tokens and virtual layout tokens. A `TraceEntry` marks each token that the
+  parser took but did not keep in the AST, for example a trailing comma, an
+  extra semicolon, or the parentheses of `data (T a) = …`.
+- `tokenKindWithoutSpacing` maps a token kind to the kind that it has with
+  spaces around it, for example `TkPrefixPercent` to `TkVarSym "%"`.
+- When the discarded entries are removed, a module and its pretty-printed
+  form have the same trace token kinds. A formatter can use this to pair the
+  tokens of the two texts.
+
 ### Fixed
 
 - The pretty-printer puts the alternatives of a multi-way `if` to the right of

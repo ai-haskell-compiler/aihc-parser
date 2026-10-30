@@ -51,7 +51,7 @@ warningPragmaParser =
     _ -> Nothing
 
 exportSpecListParser :: TokParser [ExportSpec]
-exportSpecListParser = parens $ exportSpecParser `MP.sepEndBy` expectedTok TkSpecialComma
+exportSpecListParser = parens $ exportSpecParser `sepEndByDiscard` expectedTok TkSpecialComma
 
 exportSpecParser :: TokParser ExportSpec
 exportSpecParser = withSpanAnn (ExportAnn . mkSpanAnnotation) $ do
@@ -102,6 +102,8 @@ membersParser =
         False -> pure MembersAll
         True -> do
           trailingMembers <- memberNameParser `MP.sepBy` expectedTok TkSpecialComma
+          -- With no member after it, the comma is not in the AST.
+          when (null trailingMembers) discardLastToken
           pure (MembersListAll 0 trailingMembers)
 
     parseMemberList = do
@@ -122,6 +124,8 @@ membersParser =
         False -> pure (MembersListAll (length members) members)
         True -> do
           trailingMembers <- memberNameParser `MP.sepBy` expectedTok TkSpecialComma
+          -- With no member after it, the comma is not in the AST.
+          when (null trailingMembers) discardLastToken
           pure (MembersListAll (length members) (members <> trailingMembers))
 
     memberNameParser = do
@@ -192,7 +196,7 @@ importSpecParser :: TokParser ImportSpec
 importSpecParser = withSpan $ do
   isHiding <-
     MP.option False (expectedTok TkVarHiding >> pure True)
-  items <- parens $ importItemParser `MP.sepEndBy` expectedTok TkSpecialComma
+  items <- parens $ importItemParser `sepEndByDiscard` expectedTok TkSpecialComma
   pure $ \span' ->
     ImportSpec
       { importSpecAnns = [mkSpanAnnotation span'],
