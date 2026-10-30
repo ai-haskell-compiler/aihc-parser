@@ -164,7 +164,7 @@ prettyModuleDoc modu =
 
 prettyExportSpecList :: [ExportSpec] -> Doc ann
 prettyExportSpecList specs =
-  parens (hsep (punctuate comma (map prettyExportSpec specs)))
+  parens (prettyCommaFill (map prettyExportSpec specs))
 
 prettyExportSpec :: ExportSpec -> Doc ann
 prettyExportSpec spec =
@@ -231,7 +231,7 @@ prettyImportSpec :: ImportSpec -> Doc ann
 prettyImportSpec spec =
   hsep
     ( ["hiding" | importSpecHiding spec]
-        <> [parens (hsep (punctuate comma (map prettyImportItem (importSpecItems spec))))]
+        <> [parens (prettyCommaFill (map prettyImportItem (importSpecItems spec)))]
     )
 
 prettyImportItem :: ImportItem -> Doc ann
@@ -559,7 +559,9 @@ prettyType ty =
     TTypeApp f x ->
       prettyType f <+> prettyTypeAppArg x
     TFun arrowKind a b ->
-      prettyType a <+> prettyArrowKind arrowKind <+> prettyType b
+      -- When the arrows do not fit, each argument after the first starts a
+      -- new line with its arrow.
+      group (prettyType a <> nest 2 (prettyArrowTail arrowKind b))
     TTuple tupleFlavor promoted elems ->
       let elemsDoc = hsep (punctuate comma (map prettyType elems))
           tupleDoc = prettyTupleBody tupleFlavor elemsDoc
@@ -581,9 +583,32 @@ prettyType ty =
     TContext constraints inner ->
       case constraints of
         [] -> prettyType inner
-        cs -> prettyContext cs <+> "=>" <+> prettyType inner
+        cs -> withContext cs (prettyType inner)
     TSplice body -> "$" <> prettySpliceBody body
     TWildcard -> "_"
+
+-- | The arrows and arguments of a function type after its first argument.
+prettyArrowTail :: ArrowKind -> Type -> Doc ann
+prettyArrowTail arrowKind ty =
+  line
+    <> prettyArrowKind arrowKind
+    <+> case ty of
+      TAnn _ sub -> continue sub
+      _ -> continue ty
+  where
+    continue t =
+      case t of
+        TFun nextKind a b -> prettyType a <> prettyArrowTail nextKind b
+        TAnn _ sub -> continue sub
+        _ -> prettyType t
+
+-- | A context and the item that it applies to. When they do not fit, the
+-- item starts a new line after the @=>@.
+withContext :: [Type] -> Doc ann -> Doc ann
+withContext constraints doc =
+  case constraints of
+    [] -> doc
+    _ -> group (prettyContext constraints <> nest 2 (line <> "=>" <+> doc))
 
 prettyArrowKind :: ArrowKind -> Doc ann
 prettyArrowKind ArrowUnrestricted = "->"
@@ -690,7 +715,7 @@ prettyDataDecl decl =
       | any isGadtCon ctors ->
           headDoc <+> prettyGadtConBlock ctors (dataDeclDeriving decl)
     _ ->
-      hsep (headParts <> ctorPart <> derivingParts (dataDeclDeriving decl))
+      prettyDataBody headDoc (dataDeclConstructors decl) (dataDeclDeriving decl)
   where
     headParts =
       ["data"]
@@ -699,17 +724,27 @@ prettyDataDecl decl =
         <> kindPart
     headDoc = hsep headParts
     kindPart = maybe [] (\k -> ["::", prettyType k]) (dataDeclKind decl)
-    ctorPart =
-      case dataDeclConstructors decl of
-        [] -> []
-        ctors -> ["=", hsep (punctuate " |" (map prettyDataCon ctors))]
+
+-- | The constructors and deriving clauses after a data declaration head. When
+-- they do not fit, each constructor and each deriving clause starts a new
+-- line.
+prettyDataBody :: Doc ann -> [DataConDecl] -> [DerivingClause] -> Doc ann
+prettyDataBody headDoc ctors derivingClauses =
+  group (headDoc <> nest 2 (ctorDocs <> derivingDocs))
+  where
+    ctorDocs =
+      mconcat
+        [ line <> separator <+> prettyDataCon ctor
+        | (separator, ctor) <- zip ("=" : repeat "|") ctors
+        ]
+    derivingDocs = mconcat [line <> hsep (derivingPart clause) | clause <- derivingClauses]
 
 prettyTypeDataDecl :: DataDecl -> Doc ann
 prettyTypeDataDecl decl =
   case dataDeclConstructors decl of
     ctors
       | any isGadtCon ctors -> headDoc <+> prettyGadtConBlock ctors []
-    _ -> hsep (headParts <> ctorPart)
+    _ -> prettyDataBody headDoc (dataDeclConstructors decl) []
   where
     headParts =
       ["type data"]
@@ -717,10 +752,6 @@ prettyTypeDataDecl decl =
         <> kindPart
     headDoc = hsep headParts
     kindPart = maybe [] (\k -> ["::", prettyType k]) (dataDeclKind decl)
-    ctorPart =
-      case dataDeclConstructors decl of
-        [] -> []
-        ctors -> ["=", hsep (punctuate " |" (map prettyDataCon ctors))]
 
 isGadtCon :: DataConDecl -> Bool
 isGadtCon (DataConAnn _ inner) = isGadtCon inner
@@ -734,7 +765,7 @@ prettyNewtypeDecl decl =
       | isGadtCon ctor ->
           headDoc <+> prettyGadtConBlock [ctor] (newtypeDeclDeriving decl)
     _ ->
-      hsep (headParts <> ctorPart <> derivingParts (newtypeDeclDeriving decl))
+      prettyDataBody headDoc (maybe [] pure (newtypeDeclConstructor decl)) (newtypeDeclDeriving decl)
   where
     headParts =
       ["newtype"]
@@ -743,10 +774,6 @@ prettyNewtypeDecl decl =
         <> kindPart
     headDoc = hsep headParts
     kindPart = maybe [] (\k -> ["::", prettyType k]) (newtypeDeclKind decl)
-    ctorPart =
-      case newtypeDeclConstructor decl of
-        Nothing -> []
-        Just ctor -> ["=", prettyDataCon ctor]
 
 derivingParts :: [DerivingClause] -> [Doc ann]
 derivingParts = concatMap derivingPart
@@ -886,26 +913,31 @@ prettyGadtBody body =
     GadtPrefixBody args resultTy ->
       case args of
         [] -> prettyType resultTy
-        _ ->
-          hsep $
-            concatMap (\(bt, ak) -> [prettyBangType bt, prettyArrowKind ak]) args
-              ++ [prettyType resultTy]
+        (firstArg, firstKind) : rest ->
+          group
+            ( prettyBangType firstArg
+                <> nest
+                  2
+                  ( mconcat
+                      [ line <> prettyArrowKind kind <+> doc
+                      | (kind, doc) <- zip (firstKind : map snd rest) (map (prettyBangType . fst) rest <> [prettyType resultTy])
+                      ]
+                  )
+            )
     GadtRecordBody fields resultTy ->
       braces (prettyRecordFields fields) <+> "->" <+> prettyType resultTy
 
 prettyRecordFields :: [FieldDecl] -> Doc ann
 prettyRecordFields fields =
-  hsep
-    ( punctuate
-        comma
-        [ hsep $
-            [hsep (punctuate comma (map prettyFieldName (fieldNames fld)))]
-              <> maybe [] (\mult -> ["%" <> prettyType mult]) (fieldMultiplicity fld)
-              <> [ "::",
-                   prettyRecordFieldBangType (fieldType fld)
-                 ]
-        | fld <- fields
-        ]
+  prettyCommaBlock
+    ( [ hsep $
+          [hsep (punctuate comma (map prettyFieldName (fieldNames fld)))]
+            <> maybe [] (\mult -> ["%" <> prettyType mult]) (fieldMultiplicity fld)
+            <> [ "::",
+                 prettyRecordFieldBangType (fieldType fld)
+               ]
+      | fld <- fields
+      ]
     )
   where
     prettyFieldName :: UnqualifiedName -> Doc ann
@@ -936,12 +968,11 @@ prettyRecordFieldBangType bt =
 prettyClassDecl :: ClassDecl -> Doc ann
 prettyClassDecl decl =
   let headDoc =
-        hsep
-          ( ["class"]
-              <> maybeContextPrefix (classDeclContext decl)
-              <> prettyNamedBinderHead (classDeclHead decl)
-              <> prettyClassFundeps (classDeclFundeps decl)
-          )
+        let classHead = hsep (prettyNamedBinderHead (classDeclHead decl) <> prettyClassFundeps (classDeclFundeps decl))
+         in "class"
+              <+> case classDeclContext decl of
+                Nothing -> classHead
+                Just constraints -> group (prettyContext constraints <> nest 2 (line <> "=>" <+> classHead))
    in case classDeclItems decl of
         [] -> headDoc
         items ->
@@ -970,12 +1001,6 @@ prettyTypeFamilyInjectivity injectivity =
       "->",
       hsep (map pretty (typeFamilyInjectivityDetermined injectivity))
     ]
-
-maybeContextPrefix :: Maybe [Type] -> [Doc ann]
-maybeContextPrefix maybeConstraints =
-  case maybeConstraints of
-    Nothing -> []
-    Just constraints -> [prettyContext constraints, "=>"]
 
 prettyClassItem :: ClassDeclItem -> Doc ann
 prettyClassItem item =
@@ -1011,8 +1036,7 @@ prettyInstanceDecl decl =
               <> map prettyPragma (instanceDeclPragmas decl)
               <> maybe [] (\w -> [prettyPragma w]) (instanceDeclWarning decl)
               <> forallTyVarBinderPrefix (instanceDeclForall decl)
-              <> contextPrefix (instanceDeclContext decl)
-              <> [prettyType (instanceDeclHead decl)]
+              <> [withContext (instanceDeclContext decl) (prettyType (instanceDeclHead decl))]
           )
    in case instanceDeclItems decl of
         [] -> headDoc
@@ -1385,6 +1409,10 @@ prettyCommaSeparated render items =
   case map render items of
     [] -> mempty
     rendered -> prettyCommaBlock rendered
+
+-- | Items separated by commas. Each line gets as many items as fit.
+prettyCommaFill :: [Doc ann] -> Doc ann
+prettyCommaFill items = nest 2 (concatWith (\x y -> x <> comma <> softline <> y) items)
 
 -- | Items separated by commas. When they do not fit on the line, each item
 -- after the first starts a new line.

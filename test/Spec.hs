@@ -343,6 +343,10 @@ buildTests = do
             testCase "leaves block infix lhs view expressions bare" test_viewExprBlockInfixLhsNoParens,
             testCase "breaks a long record after each comma" test_prettyLongRecordBreaksAfterCommas,
             testCase "fills the arguments of a long application" test_prettyLongApplicationFillsArguments,
+            testCase "breaks a long type signature before each arrow" test_prettyLongTypeSignatureBreaksArrows,
+            testCase "breaks a long data declaration before each constructor" test_prettyLongDataDeclBreaksConstructors,
+            testCase "fills a long import list" test_prettyLongImportListFills,
+            testCase "breaks a long instance head after its context" test_prettyLongInstanceHeadBreaksContext,
             testCase "leaves view expression block arguments bare" test_viewExprBlockArgumentNoParens,
             testCase "leaves multi-way-if app infix lhs view expressions bare" test_viewExprMultiWayIfAppInfixLhsNoParens,
             testCase "parenthesizes non-final let block arguments in view expressions" test_viewExprNonfinalLetBlockArgumentParens,
@@ -1880,6 +1884,30 @@ test_prettyLongApplicationFillsArguments =
   assertParsedModulePrettyContains
     "module M where\nf = someFunction argumentOne argumentTwo argumentThree argumentFour argumentFive argumentSix\n"
     "f = someFunction argumentOne argumentTwo argumentThree argumentFour argumentFive\n  argumentSix"
+
+test_prettyLongTypeSignatureBreaksArrows :: Assertion
+test_prettyLongTypeSignatureBreaksArrows =
+  assertParsedModulePrettyContains
+    "module M where\nf :: FirstArgumentType -> SecondArgumentType -> ThirdArgumentType -> FourthArgumentType -> ResultType\n"
+    "f :: FirstArgumentType\n  -> SecondArgumentType\n  -> ThirdArgumentType\n  -> FourthArgumentType\n  -> ResultType"
+
+test_prettyLongDataDeclBreaksConstructors :: Assertion
+test_prettyLongDataDeclBreaksConstructors =
+  assertParsedModulePrettyContains
+    "module M where\ndata Colour = Red | Green | Blue | Cyan | Magenta | Yellow | Black | White deriving (Eq, Show)\n"
+    "data Colour\n  = Red\n  | Green\n  | Blue\n  | Cyan\n  | Magenta\n  | Yellow\n  | Black\n  | White\n  deriving (Eq, Show)"
+
+test_prettyLongImportListFills :: Assertion
+test_prettyLongImportListFills =
+  assertParsedModulePrettyContains
+    "module M where\nimport Data.List (sortBy, groupBy, intercalate, isPrefixOf, isSuffixOf, partition)\n"
+    "import Data.List (sortBy, groupBy, intercalate, isPrefixOf, isSuffixOf,\n  partition)"
+
+test_prettyLongInstanceHeadBreaksContext :: Assertion
+test_prettyLongInstanceHeadBreaksContext =
+  assertParsedModulePrettyContains
+    "module M where\ninstance (Show a, Show b, Show c, Show d) => Show (VeryLongTypeName a b c d) where\n  show _ = \"\"\n"
+    "instance (Show a, Show b, Show c, Show d)\n  => Show (VeryLongTypeName a b c d) where"
 
 test_viewExprBlockInfixLhsNoParens :: Assertion
 test_viewExprBlockInfixLhsNoParens = do
