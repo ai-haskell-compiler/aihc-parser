@@ -33,6 +33,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - When a record construction, a record update, a list, or a tuple does not
   fit, the pretty-printer starts a new line after each comma. Before, it kept
   all items on one line.
+- When a function type does not fit, each argument after the first starts a
+  new line with its arrow. A context that does not fit puts the rest on a new
+  line after `=>`. This also applies to instance heads and class heads.
+- When a `data` or `newtype` declaration does not fit, each constructor and
+  each deriving clause starts a new line. A record declaration that does not
+  fit starts a new line after each field.
+- When an import list or an export list does not fit, each line gets as many
+  items as fit.
 
 ### Fixed
 
