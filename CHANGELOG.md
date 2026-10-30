@@ -19,6 +19,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   form have the same trace token kinds. A formatter can use this to pair the
   tokens of the two texts.
 
+### Changed
+
+- The pretty-printer puts an expression on one line when it fits in the
+  page width. For example, it prints `f x = x + 1` on one line. Before, it
+  put each operator and each function argument on a new line. A long
+  expression still breaks at the same points as before. Layout blocks
+  (`do`, `case`, `where`, `let`, guards, and multi-way `if`) still start new
+  lines where the layout rule needs them.
+- When a function application does not fit, the pretty-printer puts as many
+  arguments on a line as fit. Before, it put each argument on its own line.
+  After an argument that ends with a layout block, a new line still starts.
+- When a record construction, a record update, a list, or a tuple does not
+  fit, the pretty-printer starts a new line after each comma. Before, it kept
+  all items on one line.
+- When a function type does not fit, each argument after the first starts a
+  new line with its arrow. A context that does not fit puts the rest on a new
+  line after `=>`. This also applies to instance heads and class heads.
+- When a `data` or `newtype` declaration does not fit, each constructor and
+  each deriving clause starts a new line. A record declaration that does not
+  fit starts a new line after each field.
+- When an import list or an export list does not fit, each line gets as many
+  items as fit.
+
 ### Fixed
 
 - The pretty-printer puts the alternatives of a multi-way `if` to the right of
