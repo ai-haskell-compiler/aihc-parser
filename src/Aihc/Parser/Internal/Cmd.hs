@@ -176,7 +176,7 @@ cmdBindOrBodyStmtParser = withSpanAnn (DoAnn . mkSpanAnnotation) $ do
   expr <- exprParser
   hasArrow <- optionalTok TkReservedLeftArrow
   if hasArrow
-    then DoBind <$> liftCheck (checkPattern expr) <*> cmdParser
+    then DoBind <$> checkPattern expr <*> cmdParser
     else do
       -- No bind arrow: this is a body statement.  Check for arrow tail.
       mArrTail <- MP.optional cmdArrTailParser

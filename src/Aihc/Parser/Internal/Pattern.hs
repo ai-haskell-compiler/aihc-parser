@@ -4,6 +4,7 @@ module Aihc.Parser.Internal.Pattern
   ( patternParser,
     patternParserWithTypeSigParser,
     caseAltPatternParser,
+    nPlusKOrPatParser,
     patParser,
     lpatParser,
     apatParser,
@@ -34,7 +35,7 @@ patternParserWithTypeSigParser typeSigParser =
     optionalSuffix
       (expectedTok TkReservedDoubleColon *> typeSigParser)
       PTypeSig
-      patParser
+      nPlusKOrPatParser
 
 -- | Parse the pattern position of a case alternative.
 --
@@ -46,7 +47,55 @@ patternParserWithTypeSigParser typeSigParser =
 -- | Case alternatives intentionally use the report @pat@ level rather than
 -- the outer typed-pattern wrapper.
 caseAltPatternParser :: TokParser Pattern
-caseAltPatternParser = patParser
+caseAltPatternParser = nPlusKOrPatParser
+
+-- | Parse an n+k pattern or a @pat@.
+--
+-- Haskell 98 puts the n+k pattern at the top pattern level:
+--
+-- @
+-- pat → var + integer
+--     | pat0
+-- @
+--
+-- Only accept the n+k form when the @NPlusKPatterns@ extension is on.
+-- Function heads do not use this parser.  In a function head, @n + 1 = e@
+-- is a definition of @(+)@, not a pattern binding.
+--
+-- Like GHC, accept an n+k pattern as the left operand of an infix
+-- constructor pattern, as in @n + 1 : xs@.
+nPlusKOrPatParser :: TokParser Pattern
+nPlusKOrPatParser = do
+  enabled <- isExtensionEnabled NPlusKPatterns
+  isNPlusK <- if enabled then startsNPlusKPattern else pure False
+  if isNPlusK
+    then do
+      lhs <- nPlusKPatternParser
+      rest <- MP.many ((,) <$> conOperatorParser <*> lpatParser)
+      pure (foldInfixL buildInfixPattern lhs rest)
+    else patParser
+
+-- | Look at the next three tokens for @var + integer@.
+startsNPlusKPattern :: TokParser Bool
+startsNPlusKPattern = do
+  tokens <- MP.optional . MP.try . lookAhead $ (,,) <$> anySingle <*> anySingle <*> anySingle
+  pure $
+    case tokens of
+      Just (varTok, plusTok, intTok) ->
+        case (lexTokenKind varTok, lexTokenKind plusTok, lexTokenKind intTok) of
+          (TkVarId {}, TkVarSym "+", TkInteger _ TInteger) -> True
+          _ -> False
+      Nothing -> False
+
+nPlusKPatternParser :: TokParser Pattern
+nPlusKPatternParser = withSpanAnn (PAnn . mkSpanAnnotation) $ do
+  name <-
+    tokenSatisfy "variable" $ \tok ->
+      case lexTokenKind tok of
+        TkVarId ident -> Just (mkUnqualifiedNameAt tok NameVarId ident)
+        _ -> Nothing
+  expectedTok (TkVarSym "+")
+  PNPlusK name <$> intLiteralParser
 
 -- | Parse a pattern (@pat@ in the Haskell Report).
 --
@@ -355,12 +404,12 @@ subpatternWithBareViewParser = do
     tok <- peekToken
     case lexTokenKind tok of
       TkReservedRightArrow -> pure (Left expr)
-      TkSpecialComma -> Right <$> liftCheck (checkPattern expr)
-      TkSpecialRBracket -> Right <$> liftCheck (checkPattern expr)
-      TkSpecialRBrace -> Right <$> liftCheck (checkPattern expr)
-      TkSpecialRParen -> Right <$> liftCheck (checkPattern expr)
-      TkSpecialUnboxedRParen -> Right <$> liftCheck (checkPattern expr)
-      TkReservedPipe -> Right <$> liftCheck (checkPattern expr)
+      TkSpecialComma -> Right <$> checkPattern expr
+      TkSpecialRBracket -> Right <$> checkPattern expr
+      TkSpecialRBrace -> Right <$> checkPattern expr
+      TkSpecialRParen -> Right <$> checkPattern expr
+      TkSpecialUnboxedRParen -> Right <$> checkPattern expr
+      TkReservedPipe -> Right <$> checkPattern expr
       _ -> fail "incomplete element parse"
   case mResult of
     Just (Left expr) -> do

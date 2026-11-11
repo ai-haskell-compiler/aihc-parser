@@ -52,6 +52,7 @@ genPattern = scale (`div` 2) $ do
         PLit <$> genLiteral,
         PQuasiQuote <$> genQuoterName <*> genQuasiBody,
         PNegLit <$> genNumericLiteral,
+        genNPlusKPattern,
         PSplice <$> genPatSpliceBody,
         PTuple Boxed <$> elements [[], [PVar (mkUnqualifiedName NameVarId "x"), PWildcard]],
         PTuple Unboxed <$> elements [[], [PVar (mkUnqualifiedName NameVarId "x")], [PVar (mkUnqualifiedName NameVarId "x"), PWildcard]],
@@ -75,6 +76,14 @@ genPattern = scale (`div` 2) $ do
         PStrict <$> genPattern,
         PIrrefutable <$> genPattern
       ]
+
+-- | Generate an n+k pattern such as @n + 1@.
+-- The variable is always a variable identifier and the literal is always a
+-- non-negative integer literal, because the n+k syntax allows only these.
+genNPlusKPattern :: Gen Pattern
+genNPlusKPattern =
+  (PNPlusK . mkUnqualifiedName NameVarId <$> genVarId)
+    <*> oneof [mkIntLiteral <$> chooseInteger (0, 999), mkHexLiteral <$> chooseInteger (0, 255)]
 
 genViewPatternWith :: Gen Pattern
 genViewPatternWith =
@@ -229,6 +238,10 @@ shrinkPattern pat =
       PNegLit lit ->
         [PLit lit]
           <> [PNegLit shrunk | shrunk <- shrinkNumericLiteral lit]
+      PNPlusK name lit ->
+        [PVar name]
+          <> [PNPlusK name' lit | name' <- shrinkUnqualifiedName name]
+          <> [PNPlusK name lit' | lit' <- shrinkLiteral lit]
       PParen inner ->
         [inner] <> [PParen inner' | inner' <- shrinkPattern inner]
       PUnboxedSum altIdx arity inner ->

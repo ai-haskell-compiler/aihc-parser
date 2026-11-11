@@ -1,0 +1,6 @@
+extensions: [NPlusKPatterns]
+input: |
+  n+1
+ast: |-
+  PNPlusK UnqualifiedName {"n"} (LitInt 1 TInteger)
+status: pass

@@ -145,6 +145,7 @@ compatParserConfig =
           MagicHash,
           MultiParamTypeClasses,
           MultiWayIf,
+          NPlusKPatterns,
           OverloadedLabels,
           OverloadedRecordDot,
           ParallelListComp,

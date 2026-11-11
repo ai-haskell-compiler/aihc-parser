@@ -83,6 +83,7 @@ compatAihcExtensions =
         Syntax.LinearTypes,
         Syntax.MagicHash,
         Syntax.MultiWayIf,
+        Syntax.NPlusKPatterns,
         Syntax.OverloadedLabels,
         Syntax.OverloadedRecordDot,
         Syntax.ParallelListComp,

@@ -1439,6 +1439,9 @@ data Pattern
     PIrrefutable Pattern
   | -- | @-1@
     PNegLit Literal
+  | -- | @n+1@, an n+k pattern.  It needs the @NPlusKPatterns@ extension.
+    -- The literal is always a non-negative integer literal.
+    PNPlusK UnqualifiedName Literal
   | -- | @(pat)@
     PParen Pattern
   | -- | @T { x = p, y, .. }@

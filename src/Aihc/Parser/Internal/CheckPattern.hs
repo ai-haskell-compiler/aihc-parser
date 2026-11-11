@@ -10,27 +10,37 @@
 -- \"parse as expression, then reclassify\" strategy described in
 -- @docs\/unified-expr-pattern-parsing.md@.
 --
--- The core function 'checkPattern' performs a structural recursion over
+-- The core function 'checkPatternWith' performs a structural recursion over
 -- 'Expr', converting each expression node into its pattern counterpart.
 -- Expression-only constructs (if, case, do, lambda, etc.) are rejected
 -- with a descriptive error message.
 module Aihc.Parser.Internal.CheckPattern
   ( checkPattern,
-    checkPatterns,
+    checkPatternWith,
   )
 where
 
-import Aihc.Parser.Internal.Common (isConLikeName, nameToUnqualified)
+import Aihc.Parser.Internal.Common (TokParser, isConLikeName, isExtensionEnabled, liftCheck, nameToUnqualified)
 import Aihc.Parser.Syntax
 import Data.Maybe (isJust, isNothing)
 import Data.Text (Text)
 
+-- | Convert an expression tree into a pattern in the parser.
+-- The parser fails with a diagnostic message if the expression cannot be
+-- interpreted as a valid pattern.  The enabled extensions control which
+-- patterns are valid.
+checkPattern :: Expr -> TokParser Pattern
+checkPattern expr = do
+  nPlusK <- isExtensionEnabled NPlusKPatterns
+  liftCheck (checkPatternWith nPlusK expr)
+
 -- | Convert an expression tree into a pattern.
+-- The 'Bool' argument is 'True' when the @NPlusKPatterns@ extension is on.
 -- Returns @Left@ with a diagnostic message if the expression cannot be
 -- interpreted as a valid pattern.
-checkPattern :: Expr -> Either Text Pattern
-checkPattern expr = case expr of
-  EAnn ann sub -> fmap (PAnn ann) (checkPattern sub)
+checkPatternWith :: Bool -> Expr -> Either Text Pattern
+checkPatternWith nPlusK expr = case expr of
+  EAnn ann sub -> fmap (PAnn ann) (checkPattern' sub)
   EPragma pragma _ -> checkPragmaPattern pragma
   -- Variables and constructors
   EVar name
@@ -45,39 +55,42 @@ checkPattern expr = case expr of
   -- produce @PParen (PView f pat)@ to preserve the explicit parens in
   -- the AST, matching the shape produced by the dedicated pattern parser.
   EParen inner
-    | Just vp <- asViewPat inner -> Right (PParen vp)
-    | otherwise -> PParen <$> checkPattern inner
+    | Just vp <- asViewPat nPlusK inner -> Right (PParen vp)
+    | otherwise -> PParen <$> checkPattern' inner
   -- Tuple
   ETuple fl elems
     | Just tupleCon <- tupleConstructorPattern fl elems -> Right tupleCon
     | otherwise -> do
-        pats <- traverse checkTupleElement elems
+        pats <- traverse (checkTupleElement nPlusK) elems
         Right (PTuple fl pats)
   -- List
-  EList elems -> PList <$> traverse checkPattern elems
+  EList elems -> PList <$> traverse checkPattern' elems
   -- Unboxed sum
-  EUnboxedSum i n e -> PUnboxedSum i n <$> checkPattern e
+  EUnboxedSum i n e -> PUnboxedSum i n <$> checkPattern' e
   -- View pattern: @expr -> pat@.
   EViewPat l r -> do
-    rPat <- checkPattern r
+    rPat <- checkPattern' r
     Right (PView l rPat)
   -- Infix: only constructor operators (starting with ':') are valid in patterns.
   EInfix l op r
     | isConLikeOp op -> do
-        lPat <- checkPattern l
-        rPat <- checkPattern r
+        lPat <- checkPattern' l
+        rPat <- checkPattern' r
         Right (PInfix lPat op rPat)
+    | nPlusK,
+      Just pat <- nPlusKPattern l op r ->
+        Right pat
     | otherwise -> Left ("unexpected variable operator '" <> renderName op <> "' in pattern")
   -- Type signature
   ETypeSig e ty -> do
-    pat <- checkPattern e
+    pat <- checkPattern' e
     Right (PTypeSig pat ty)
   -- Negation (must be a literal)
   ENegate inner -> checkNegLitPattern inner
   -- Application: accumulate arguments into PCon
   EApp f x -> do
-    fPat <- checkPattern f
-    xPat <- checkPattern x
+    fPat <- checkPattern' f
+    xPat <- checkPattern' x
     case peelPatternAnn fPat of
       PCon name typeArgs args -> Right (PCon name typeArgs (args ++ [xPat]))
       PBuiltinCon con typeArgs args -> Right (PBuiltinCon con typeArgs (args ++ [xPat]))
@@ -87,7 +100,7 @@ checkPattern expr = case expr of
     patFields <-
       traverse
         ( \field -> do
-            pat <- checkPattern (recordFieldValue field)
+            pat <- checkPattern' (recordFieldValue field)
             pure field {recordFieldValue = pat}
         )
         fields
@@ -122,7 +135,7 @@ checkPattern expr = case expr of
   EGetField {} -> Left "unexpected record field access in pattern"
   EGetFieldProjection {} -> Left "unexpected projection section in pattern"
   ETypeApp fun ty -> do
-    funPat <- checkPattern fun
+    funPat <- checkPattern' fun
     case peelPatternAnn funPat of
       PCon name typeArgs args -> Right (PCon name (typeArgs ++ [ty]) args)
       PBuiltinCon con typeArgs args -> Right (PBuiltinCon con (typeArgs ++ [ty]) args)
@@ -136,6 +149,8 @@ checkPattern expr = case expr of
   ETHTypeNameQuote {} -> Left "unexpected Template Haskell type name quote in pattern"
   ETHTypedSplice {} -> Left "unexpected typed Template Haskell splice in pattern"
   EProc {} -> Left "unexpected proc expression in pattern"
+  where
+    checkPattern' = checkPatternWith nPlusK
 
 checkPragmaPattern :: Pragma -> Either Text Pattern
 checkPragmaPattern pragma =
@@ -143,14 +158,10 @@ checkPragmaPattern pragma =
     PragmaSCC {} -> Left "unexpected SCC pragma in pattern"
     _ -> Left "unexpected pragma in pattern"
 
--- | Convert a list of expressions into patterns.
-checkPatterns :: [Expr] -> Either Text [Pattern]
-checkPatterns = traverse checkPattern
-
 -- | Check that a tuple element is not a tuple section (Nothing).
-checkTupleElement :: Maybe Expr -> Either Text Pattern
-checkTupleElement Nothing = Left "unexpected tuple section in pattern"
-checkTupleElement (Just e) = checkPattern e
+checkTupleElement :: Bool -> Maybe Expr -> Either Text Pattern
+checkTupleElement _ Nothing = Left "unexpected tuple section in pattern"
+checkTupleElement nPlusK (Just e) = checkPatternWith nPlusK e
 
 -- | A tuple section with no fields, such as @(,)@ or @(#,,#)@, is the
 -- prefix tuple constructor.
@@ -168,6 +179,34 @@ checkNegLitPattern inner = case inner of
   EAnn ann sub -> fmap (PAnn ann) (checkNegLitPattern sub)
   _ -> Left "negation in pattern requires a numeric literal"
 
+-- | Try to interpret @l op r@ as an n+k pattern such as @n+1@.
+-- The operator must be an unqualified @+@, the left operand must be an
+-- unqualified variable, and the right operand must be a plain integer literal.
+nPlusKPattern :: Expr -> Name -> Expr -> Maybe Pattern
+nPlusKPattern l op r
+  | isNothing (nameQualifier op),
+    nameType op == NameVarSym,
+    nameText op == "+",
+    Just var <- nPlusKVar l,
+    Just lit <- nPlusKLiteral r =
+      Just (PNPlusK var lit)
+  | otherwise = Nothing
+  where
+    nPlusKVar e =
+      case e of
+        EAnn _ sub -> nPlusKVar sub
+        EVar name
+          | isNothing (nameQualifier name),
+            nameType name == NameVarId,
+            nameText name /= "_" ->
+              Just (nameToUnqualified name)
+        _ -> Nothing
+    nPlusKLiteral e =
+      case e of
+        EAnn ann sub -> LitAnn ann <$> nPlusKLiteral sub
+        EInt n TInteger repr -> Just (LitInt n TInteger repr)
+        _ -> Nothing
+
 -- | Check whether an operator is a constructor operator (starts with ':').
 -- Constructor operators and backtick-quoted constructors are valid in patterns;
 -- variable operators like @+@ or @*@ are not.
@@ -180,9 +219,9 @@ isConLikeOp = isConLikeName
 -- 'checkPattern' to strip the outer parentheses and produce @PView@
 -- directly (matching the AST shape that the dedicated pattern parser
 -- produces).
-asViewPat :: Expr -> Maybe Pattern
-asViewPat (EViewPat l r) =
-  case checkPattern r of
+asViewPat :: Bool -> Expr -> Maybe Pattern
+asViewPat nPlusK (EViewPat l r) =
+  case checkPatternWith nPlusK r of
     Right rPat -> Just (PView l rPat)
     Left _ -> Nothing
-asViewPat _ = Nothing
+asViewPat _ _ = Nothing
