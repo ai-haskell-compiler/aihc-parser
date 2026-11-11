@@ -960,6 +960,7 @@ toPat pat =
     A.PStrict inner -> BangPat noAnn (toLPat inner)
     A.PIrrefutable inner -> LazyPat noAnn (toLPat inner)
     A.PNegLit lit -> negLitPat lit
+    A.PNPlusK name lit -> nPlusKPat name lit
     A.PParen inner -> ParPat parAnn (toLPat inner)
     A.PRecord con fields wildcard ->
       ConPat conPatAnn (lA (toRdrName con)) (RecCon (HsRecFields noExtField (map patRecordField fields) (if wildcard then Just (lA (RecFieldsDotDot 0)) else Nothing)))
@@ -982,6 +983,14 @@ negLitPat lit =
   case A.peelLiteralAnn lit of
     A.LitInt value A.TInteger raw -> NPat noAnn (lA (mkHsIntegral (IL (sourceText raw) False value))) (Just noSyntaxExpr) noSyntaxExpr
     A.LitFloat value A.TFractional raw -> NPat noAnn (lA (mkHsFractional (fractionalLit value raw))) (Just noSyntaxExpr) noSyntaxExpr
+    other -> litPat other
+
+nPlusKPat :: A.UnqualifiedName -> A.Literal -> Pat GhcPs
+nPlusKPat name lit =
+  case A.peelLiteralAnn lit of
+    A.LitInt value _ raw ->
+      let overLit = mkHsIntegral (IL (sourceText raw) False value)
+       in NPlusKPat noAnn (lA (toRdrName (A.qualifyName Nothing name))) (lA overLit) overLit noSyntaxExpr noSyntaxExpr
     other -> litPat other
 
 numLitPat :: Integer -> A.NumericType -> T.Text -> Pat GhcPs

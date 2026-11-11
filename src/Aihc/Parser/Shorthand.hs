@@ -855,6 +855,7 @@ docPattern pat =
     PStrict inner -> "PStrict" <+> parens (docPattern inner)
     PIrrefutable inner -> "PIrrefutable" <+> parens (docPattern inner)
     PNegLit lit -> "PNegLit" <+> parens (docLiteral lit)
+    PNPlusK name lit -> "PNPlusK" <+> docUnqualifiedName name <+> parens (docLiteral lit)
     PParen inner -> "PParen" <+> parens (docPattern inner)
     PRecord name fields' hasWildcard -> "PRecord" <+> docName name <+> braces (hsep (punctuate comma ([docPatternRecordField recordField | recordField <- fields'] ++ [".." | hasWildcard])))
     PTypeSig inner ty -> "PTypeSig" <+> parens (docPattern inner) <+> parens (docType ty)

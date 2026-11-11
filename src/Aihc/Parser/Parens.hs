@@ -664,8 +664,10 @@ addPatternBindLhsParens pat rhs =
     PTypeSig inner ty ->
       wrapPat
         (typedPatternBindLhsNeedsParens inner)
-        (PTypeSig (addPatternInfixOperandParens inner) (addSignatureTypeParens ty))
-    _ -> addPatternParens pat
+        (PTypeSig (wrapLeadingNPlusK (addPatternInfixOperandParens inner)) (addSignatureTypeParens ty))
+    -- A bare @n + 1 = e@ defines @(+)@.  Keep the parentheses so that the
+    -- declaration stays a pattern binding.
+    _ -> wrapLeadingNPlusK (addPatternParens pat)
 
 typedPatternBindLhsNeedsParens :: Pattern -> Bool
 typedPatternBindLhsNeedsParens (PAnn _ sub) = typedPatternBindLhsNeedsParens sub
@@ -1737,11 +1739,25 @@ addPatternParens pat =
     PStrict inner -> PStrict (addApatParens inner)
     PIrrefutable inner -> PIrrefutable (addApatParens inner)
     PNegLit lit -> PNegLit lit
+    PNPlusK name lit -> PNPlusK name lit
     PParen inner -> PParen (addPatternInDelimited inner)
     PRecord con fields hasWildcard ->
       PRecord con [field {recordFieldValue = addPatternInRecordField (recordFieldValue field)} | field <- fields] hasWildcard
     PTypeSig inner ty -> PTypeSig (addPatternInfixOperandParens inner) (addSignatureTypeParens ty)
     PSplice body -> PSplice (addSpliceBodyParens body)
+
+-- | Put parens around an n+k pattern at the start of a pattern.
+-- An n+k pattern can be the left operand of an infix pattern, as in
+-- @n + 1 : xs@.  At the start of a declaration, @n + 1@ starts a
+-- definition of @(+)@, so the n+k pattern needs parens there.
+wrapLeadingNPlusK :: Pattern -> Pattern
+wrapLeadingNPlusK pat =
+  case pat of
+    PAnn ann sub -> PAnn ann (wrapLeadingNPlusK sub)
+    PNPlusK {} -> wrapPat True pat
+    PInfix lhs op rhs -> PInfix (wrapLeadingNPlusK lhs) op rhs
+    PTypeSig inner ty -> PTypeSig (wrapLeadingNPlusK inner) ty
+    _ -> pat
 
 -- | Add parens for a pattern inside a delimited context (tuples, lists, etc.).
 -- View patterns don't need extra parens there.
@@ -1932,6 +1948,9 @@ addPatternAtomParens pat =
     PLit {} -> addPatternParens pat
     PQuasiQuote {} -> addPatternParens pat
     PNegLit {} -> wrapPat True (addPatternParens pat)
+    -- An n+k pattern is a top-level pattern form, so each atom position
+    -- needs parentheses.
+    PNPlusK {} -> wrapPat True (addPatternParens pat)
     PList {} -> addPatternParens pat
     PTuple {} -> addPatternParens pat
     PUnboxedSum {} -> addPatternParens pat
@@ -1957,6 +1976,9 @@ addPatternInfixOperandParens pat =
   case pat of
     PAnn ann sub -> PAnn ann (addPatternInfixOperandParens sub)
     PNegLit _ -> addPatternParens pat
+    -- The left operand of an infix pattern can be an n+k pattern, as in
+    -- @n + 1 : xs@.
+    PNPlusK {} -> addPatternParens pat
     PCon {} -> addPatternParens pat
     PBuiltinCon {} -> addPatternParens pat
     PInfix {} -> addPatternParens pat
@@ -1983,6 +2005,7 @@ addPatternInfixRhsOperandParens pat =
 addArrowBndrPatternParens :: Pattern -> Pattern
 addArrowBndrPatternParens p@(PTypeSig {}) = wrapPat True (addPatternParens p)
 addArrowBndrPatternParens p@(PNegLit {}) = wrapPat True (addPatternParens p)
+addArrowBndrPatternParens p@(PNPlusK {}) = wrapPat True (addPatternParens p)
 addArrowBndrPatternParens p@(PInfix {}) = wrapPat True (addPatternParens p)
 addArrowBndrPatternParens p@(PCon _ (_ : _) _) = wrapPat True (addPatternParens p)
 addArrowBndrPatternParens p@(PCon _ [] (_ : _)) = wrapPat True (addPatternParens p)
@@ -2018,9 +2041,11 @@ addInfixFunctionHeadPatternAtomParens pat =
     -- Infix function heads use infix-pattern operand grammar, where negative
     -- literal patterns do not require apat parentheses.
     PNegLit {} -> addPatternParens pat
+    -- In a function head, @n + 1 `op` x@ does not parse as an n+k operand.
+    PNPlusK {} -> wrapPat True (addPatternParens pat)
     PAs {} -> addPatternParens pat
     PTypeSig {} -> wrapPat True (addPatternParens pat)
-    PInfix {} -> addPatternParens pat
+    PInfix {} -> wrapLeadingNPlusK (addPatternParens pat)
     _ -> addPatternParens pat
 
 -- | Add parens for the inner pattern of @, !, ~.

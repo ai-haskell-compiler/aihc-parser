@@ -8,6 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- The parser accepts n+k patterns, for example `f (n+1) = n`, when the
+  `NPlusKPatterns` extension is on. `Haskell98` turns on this extension. The
+  new `PNPlusK` constructor of `Pattern` holds the variable and the integer
+  literal. A function or pattern that matches on all `Pattern` constructors
+  must add a case for `PNPlusK`.
+- With `NPlusKPatterns` on, `(n+1) = e` is a pattern binding, as in GHC.
+  Without parentheses, `n + 1 = e` is still a definition of `(+)`.
 - `parseModuleWithTrace` parses a module and also returns its token trace.
   The trace has each token that the parser took, in order. It has real
   tokens and virtual layout tokens. A `TraceEntry` marks each token that the

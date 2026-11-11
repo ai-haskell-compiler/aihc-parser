@@ -56,6 +56,7 @@ requiredExtensions = effectiveExtensions GHC2024Edition moduleExtensionSettings
           LinearTypes,
           MagicHash,
           MultiWayIf,
+          NPlusKPatterns,
           OverloadedLabels,
           OverloadedRecordDot,
           ParallelListComp,

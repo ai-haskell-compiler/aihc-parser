@@ -675,6 +675,7 @@ prettyPattern pat =
     PStrict inner -> "!" <> prettyPattern inner
     PIrrefutable inner -> "~" <> prettyPattern inner
     PNegLit lit -> "-" <> prettyLiteral lit
+    PNPlusK name lit -> prettyBinderUName name <+> "+" <+> prettyLiteral lit
     PParen inner -> parens (prettyPattern inner)
     PRecord con fields hasWildcard ->
       prettyPrefixName con

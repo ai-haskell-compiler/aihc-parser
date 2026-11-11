@@ -17,7 +17,7 @@ import Aihc.Parser.Internal.CheckPattern (checkPattern)
 import Aihc.Parser.Internal.Cmd (cmdParser)
 import Aihc.Parser.Internal.Common
 import Aihc.Parser.Internal.Decl (declParser, fixityDeclParser, pragmaDeclParser)
-import Aihc.Parser.Internal.Pattern (apatParser, caseAltPatternParser, patParser, patternParser)
+import Aihc.Parser.Internal.Pattern (apatParser, caseAltPatternParser, nPlusKOrPatParser, patParser, patternParser)
 import Aihc.Parser.Internal.Type (typeAtomParser, typeParser, typeSignatureParser)
 import Aihc.Parser.Lex (LexToken (..), LexTokenKind (..), lexTokenKind, lexTokenSpan, lexTokenText)
 import Aihc.Parser.Syntax
@@ -61,7 +61,7 @@ exprOrPatternBindParser exprP rhsP bindCtor exprCtor = do
         _ -> pure ()
       hasArrow <- optionalTok TkReservedLeftArrow
       if hasArrow
-        then Left <$> liftCheck (checkPattern expr)
+        then Left <$> checkPattern expr
         else pure (Right expr)
 
     patternBind = do
@@ -1433,7 +1433,7 @@ thTypeQuoteParser :: TokParser Expr
 thTypeQuoteParser = thQuoteParser (EAnn . mkSpanAnnotation) TkTHTypeQuoteOpen TkTHExpQuoteClose typeParser ETHTypeQuote
 
 thPatQuoteParser :: TokParser Expr
-thPatQuoteParser = thQuoteParser (EAnn . mkSpanAnnotation) TkTHPatQuoteOpen TkTHExpQuoteClose patParser ETHPatQuote
+thPatQuoteParser = thQuoteParser (EAnn . mkSpanAnnotation) TkTHPatQuoteOpen TkTHExpQuoteClose nPlusKOrPatParser ETHPatQuote
 
 thUntypedSpliceParser :: TokParser Expr
 thUntypedSpliceParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
