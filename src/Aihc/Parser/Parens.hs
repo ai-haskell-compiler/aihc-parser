@@ -1406,6 +1406,9 @@ needsCompTransformParens = \case
   -- closes the implicit layout block of the case alternatives, so a case
   -- expression needs no parentheses here.
   ECase {} -> False
+  -- A multi-way if also opens an implicit layout block, and the keyword
+  -- closes it.
+  EMultiWayIf {} -> False
   ETypeSig {} -> True
   EParen {} -> False
   EInfix _ _ rhs -> needsCompTransformInfixRhsParens rhs
