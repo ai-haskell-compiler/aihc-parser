@@ -1117,22 +1117,19 @@ functionHeadParserWithBinder binderParser infixOpParser infixPatternParser prefi
       rhsPat <- infixPatternParser
       expectedTok TkSpecialRParen
       tailPats <- MP.many prefixPatternParser
-      -- GHC reads @(n + 1) = e@ as a pattern binding of an n+k pattern,
-      -- because a parenthesized function head needs one more argument.
+      -- GHC reads a parenthesized infix head with no more arguments as a
+      -- pattern.  Thus, with n+k patterns on, @(n + 1) = e@ and
+      -- @(n + 1 : xs) = e@ are pattern bindings, not definitions of @(+)@.
       nPlusK <- isExtensionEnabled NPlusKPatterns
-      when (nPlusK && null tailPats && isNPlusKHead lhsPat op rhsPat) $
+      when (nPlusK && null tailPats && isNPlusKHead lhsPat op) $
         fail "an n+k pattern binding is not a function head"
       pure (MatchHeadInfix, op, [lhsPat, rhsPat] <> tailPats)
 
-    isNPlusKHead lhsPat op rhsPat =
+    isNPlusKHead lhsPat op =
       unqualifiedNameType op == NameVarSym
         && unqualifiedNameText op == "+"
-        && case (peelPatternAnn lhsPat, peelPatternAnn rhsPat) of
-          (PVar var, PLit lit) ->
-            unqualifiedNameType var == NameVarId
-              && case peelLiteralAnn lit of
-                LitInt _ TInteger _ -> True
-                _ -> False
+        && case peelPatternAnn lhsPat of
+          PVar var -> unqualifiedNameType var == NameVarId
           _ -> False
 
 functionBinderNameParser :: TokParser UnqualifiedName

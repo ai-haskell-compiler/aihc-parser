@@ -664,9 +664,10 @@ addPatternBindLhsParens pat rhs =
     PTypeSig inner ty ->
       wrapPat
         (typedPatternBindLhsNeedsParens inner)
-        (PTypeSig (wrapLeadingNPlusK (addPatternInfixOperandParens inner)) (addSignatureTypeParens ty))
+        (PTypeSig (addPatternInfixOperandParens inner) (addSignatureTypeParens ty))
     -- A bare @n + 1 = e@ defines @(+)@.  Keep the parentheses so that the
-    -- declaration stays a pattern binding.
+    -- declaration stays a pattern binding.  With a type signature, as in
+    -- @n + 1 :: Int = e@, the declaration is always a pattern binding.
     _ -> wrapLeadingNPlusK (addPatternParens pat)
 
 typedPatternBindLhsNeedsParens :: Pattern -> Bool
@@ -1756,7 +1757,6 @@ wrapLeadingNPlusK pat =
     PAnn ann sub -> PAnn ann (wrapLeadingNPlusK sub)
     PNPlusK {} -> wrapPat True pat
     PInfix lhs op rhs -> PInfix (wrapLeadingNPlusK lhs) op rhs
-    PTypeSig inner ty -> PTypeSig (wrapLeadingNPlusK inner) ty
     _ -> pat
 
 -- | Add parens for a pattern inside a delimited context (tuples, lists, etc.).

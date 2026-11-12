@@ -103,6 +103,13 @@ ordinaryDeclParser = do
         TkReservedDoubleColon -> sigOrValueDecl
         TkSpecialComma -> sigOrValueDecl
         TkReservedEquals -> valueDecl
+        TkVarSym "+" -> do
+          -- With n+k patterns on, @n + 1 :: Int = e@ is a typed pattern
+          -- binding.  Other declarations here are definitions of @(+)@.
+          nPlusK <- isExtensionEnabled NPlusKPatterns
+          if nPlusK
+            then nonBareVarPatternBindDeclParser <|> valueDecl
+            else valueDecl
         _
           | patternBindMayFollowVarId nextTokKind ->
               nonBareVarPatternBindDeclParser <|> valueDecl
@@ -139,8 +146,21 @@ nonBareVarPatternBindDeclParser = MP.try $ withSpanAnn (DeclAnn . mkSpanAnnotati
   pat <- region "while parsing pattern binding" patternParser
   case pat of
     PVar {} -> fail "bare variable bindings are parsed as function declarations"
+    _
+      | startsWithNPlusK pat ->
+          fail "a binding that starts with n + k without a type signature defines (+)"
     _ -> do
       DeclValue . PatternBind NoMultiplicityTag pat <$> equationRhsParser
+
+-- | Whether a pattern starts with an n+k pattern and has no type signature.
+-- GHC reads @n + 1 = e@ and @n + 1 : xs = e@ as definitions of @(+)@.
+startsWithNPlusK :: Pattern -> Bool
+startsWithNPlusK pat =
+  case pat of
+    PAnn _ sub -> startsWithNPlusK sub
+    PNPlusK {} -> True
+    PInfix lhs _ _ -> startsWithNPlusK lhs
+    _ -> False
 
 -- | Parse a pragma declaration (e.g. {-# INLINE f #-}, {-# SPECIALIZE ... #-})
 pragmaDeclParser :: TokParser Decl
