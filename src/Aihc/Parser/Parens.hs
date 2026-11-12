@@ -1401,6 +1401,10 @@ needsCompTransformParens = \case
   -- following @by@ or @using@ keyword. Parenthesizing it is not only
   -- unnecessary: GHC preserves the grouping in its parsed fingerprint.
   EIf {} -> False
+  -- With TransformListComp, @by@ and @using@ are keywords.  The keyword
+  -- closes the implicit layout block of the case alternatives, so a case
+  -- expression needs no parentheses here.
+  ECase {} -> False
   ETypeSig {} -> True
   EParen {} -> False
   EInfix _ _ rhs -> needsCompTransformInfixRhsParens rhs
