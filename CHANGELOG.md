@@ -55,6 +55,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   before `by` or `using` in a TransformListComp statement. With
   TransformListComp, these words are keywords and they close the case
   alternatives. Before, GHC read the printed module with an extra `HsPar`.
+- The pretty-printer also does not put parentheses around a multi-way `if`
+  before `by` or `using` in a TransformListComp statement. The keyword
+  closes the alternatives of the multi-way `if`.
 - The pretty-printer puts the alternatives of a multi-way `if` to the right of
   the current indentation. Before, a continuation line of the expression
   around the `if` could start at the column of the `|` of an alternative. The
