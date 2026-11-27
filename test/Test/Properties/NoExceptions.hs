@@ -160,6 +160,7 @@ genLexTokenKind =
       pure TkKeywordType,
       pure TkKeywordUnderscore,
       pure TkKeywordProc,
+      pure TkKeywordStatic,
       pure TkKeywordRec,
       pure TkKeywordMdo,
       pure TkKeywordPattern,

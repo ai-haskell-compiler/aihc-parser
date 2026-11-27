@@ -1,0 +1,6 @@
+extensions: [StaticPointers]
+input: |
+  g (static (f . h)) <$$> y
+ast: |-
+  EInfix (EApp (EVar "g") (EParen (EStatic (EParen (EInfix (EVar "f") "." (EVar "h")))))) "<$$>" (EVar "y")
+status: pass

@@ -947,6 +947,7 @@ docExpr expr =
     ETypeApp inner ty -> "ETypeApp" <+> parens (docExpr inner) <+> parens (docType ty)
     EApp f x -> "EApp" <+> parens (docExpr f) <+> parens (docExpr x)
     EProc pat body -> "EProc" <+> parens (docPattern pat) <+> parens (docCmd body)
+    EStatic body -> "EStatic" <+> parens (docExpr body)
     EPragma pragma inner -> "EPragma" <+> parens (docPragma pragma) <+> parens (docExpr inner)
     EAnn _ sub -> docExpr sub
 
@@ -1086,6 +1087,7 @@ docTokenKind kind =
     TkKeywordWhere -> "TkKeywordWhere"
     TkKeywordUnderscore -> "TkKeywordUnderscore"
     TkKeywordProc -> "TkKeywordProc"
+    TkKeywordStatic -> "TkKeywordStatic"
     TkKeywordPattern -> "TkKeywordPattern"
     TkKeywordRec -> "TkKeywordRec"
     TkKeywordMdo -> "TkKeywordMdo"

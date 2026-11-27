@@ -93,6 +93,7 @@ compatAihcExtensions =
         Syntax.RecursiveDo,
         Syntax.RequiredTypeArguments,
         Syntax.StarIsType,
+        Syntax.StaticPointers,
         Syntax.TemplateHaskell,
         Syntax.TransformListComp,
         Syntax.TupleSections,

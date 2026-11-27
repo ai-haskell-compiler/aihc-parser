@@ -716,6 +716,7 @@ toGhcHsExpr expr =
     A.ETHSplice body -> HsUntypedSplice noExtField (HsUntypedSpliceExpr noAnn (toGhcLHsExpr body))
     A.ETHTypedSplice body -> HsTypedSplice noExtField (HsTypedSpliceExpr noAnn (toGhcLHsExpr body))
     A.EProc pat cmd -> HsProc noAnn (toLPat pat) (lA (HsCmdTop noExtField (toLHsCmd cmd)))
+    A.EStatic body -> HsStatic noAnn (toGhcLHsExpr body)
     A.EPragma pragma inner -> pragmaExpr pragma inner
 
 toGhcLHsExpr :: A.Expr -> LHsExpr GhcPs

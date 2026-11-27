@@ -1,0 +1,6 @@
+extensions: [StaticPointers]
+input: |
+  static f x
+ast: |-
+  EApp (EStatic (EVar "f")) (EVar "x")
+status: pass

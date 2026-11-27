@@ -77,6 +77,7 @@ genExpr = scale (`div` 2) $ do
         EParen . ETypeSyntax TypeSyntaxExplicitNamespace <$> genTypeSyntaxType,
         EParen <$> genExpr,
         EProc <$> genPattern <*> genCmdWith,
+        EStatic <$> genExpr,
         EParen <$> (EPragma <$> genSccPragma <*> genPragmaExpr),
         -- OverloadedRecordDot
         EGetField <$> genExpr <*> genRecordFieldName,
@@ -601,6 +602,7 @@ shrinkExpr expr =
       EProc pat body ->
         [EProc pat' body | pat' <- shrinkPattern pat]
           <> [EProc pat body' | body' <- shrinkCmd body]
+      EStatic body -> body : [EStatic body' | body' <- shrinkExpr body]
       EAnn _ sub -> shrinkExpr sub
 
 shrinkCmd :: Cmd -> [Cmd]

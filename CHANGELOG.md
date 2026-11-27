@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- The parser accepts the `static e` form when the `StaticPointers`
+  extension is on. The new `EStatic` constructor of `Expr` holds the
+  operand. A function that matches on all `Expr` constructors must add a
+  case for `EStatic`.
+- With `StaticPointers` on, `static` is a keyword. The lexer gives the new
+  `TkKeywordStatic` token. Without the extension, `static` is an ordinary
+  identifier.
+- As in GHC, `static` takes one atomic operand at the start of an
+  application. Thus `static f x` is `(static f) x`.
+
 ## [6.0.0.0] - 2026-11-12
 
 ### Added

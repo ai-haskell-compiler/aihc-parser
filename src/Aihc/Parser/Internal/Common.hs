@@ -383,6 +383,7 @@ renderTokenKind tk = case tk of
   TkKeywordThen -> "keyword 'then'"
   TkKeywordElse -> "keyword 'else'"
   TkKeywordProc -> "keyword 'proc'"
+  TkKeywordStatic -> "keyword 'static'"
   TkKeywordPattern -> "keyword 'pattern'"
   TkKeywordRec -> "keyword 'rec'"
   TkKeywordBy -> "keyword 'by'"

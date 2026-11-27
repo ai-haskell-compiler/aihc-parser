@@ -1362,6 +1362,7 @@ prettyExpr expr =
        in hsep ["(#", prettyBarSeparated slots, "#)"]
     EProc pat body ->
       "proc" <+> prettyPattern pat <+> "->" <+> prettyCmd body
+    EStatic body -> "static" <+> prettyExpr body
     EPragma pragma inner ->
       prettyPragma pragma <+> prettyExpr inner
     EAnn _ sub -> prettyExpr sub
@@ -1400,6 +1401,7 @@ endsWithLayoutBlock expr =
     ELambdaPats _ body -> endsWithLayoutBlock body
     EIf _ _ no -> endsWithLayoutBlock no
     EApp _ arg -> endsWithLayoutBlock arg
+    EStatic arg -> endsWithLayoutBlock arg
     EInfix _ _ rhs -> endsWithLayoutBlock rhs
     ENegate inner -> endsWithLayoutBlock inner
     EProc {} -> True

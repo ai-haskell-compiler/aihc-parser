@@ -407,6 +407,13 @@ overloadedLabelExprParser =
 -- | Report core:
 --
 -- > fexp -> [fexp] aexp
+--
+-- The StaticPointers extension adds one more form at the start of an
+-- application, as in GHC:
+--
+-- > fexp -> 'static' aexp
+--
+-- Thus @static f x@ is @(static f) x@.
 appExprParser :: TokParser Expr
 appExprParser = appExprParserWith atomOrRecordExprParser
 
@@ -418,7 +425,7 @@ appExprParserWith atomParser = do
   let !startInput = MP.stateInput startState
       !startOffset = MP.stateOffset startState
       !inputStart = MP.pstateSourcePos (MP.statePosState startState)
-  first <- atomParser
+  first <- headParser
   rest <- MP.many appArg
   case rest of
     [] -> pure first
@@ -429,6 +436,22 @@ appExprParserWith atomParser = do
           appSpan = consumedSpan inputStart startInput startOffset endInput endOffset
       pure (EAnn (mkSpanAnnotation appSpan) (foldl applyArg first rest))
   where
+    -- The lexer gives 'TkKeywordStatic' only when StaticPointers is on.
+    headParser :: TokParser Expr
+    headParser = do
+      tok <- peekToken
+      case lexTokenKind tok of
+        TkKeywordStatic -> staticExprParser
+        _ -> atomParser
+
+    -- GHC does not check BlockArguments for the operand of @static@. Thus a
+    -- block form such as @static do ...@ is always a valid operand.
+    staticExprParser :: TokParser Expr
+    staticExprParser = withSpanAnn (EAnn . mkSpanAnnotation) $ do
+      expectedTok TkKeywordStatic
+      tok <- peekToken
+      EStatic <$> fromMaybe appExprArgParser (lexpBlockParserForToken NormalExprAtom (lexTokenKind tok))
+
     appArg :: TokParser (Either Type Expr)
     appArg = (Left <$> typeAppArg) <|> (Right <$> appExprArgParser)
 
