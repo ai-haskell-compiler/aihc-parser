@@ -158,6 +158,7 @@ compatParserConfig =
           StarIsType,
           StandaloneDeriving,
           StandaloneKindSignatures,
+          StaticPointers,
           TemplateHaskell,
           TransformListComp,
           TupleSections,

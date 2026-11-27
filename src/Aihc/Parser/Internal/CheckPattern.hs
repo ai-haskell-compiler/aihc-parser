@@ -149,6 +149,7 @@ checkPatternWith nPlusK expr = case expr of
   ETHTypeNameQuote {} -> Left "unexpected Template Haskell type name quote in pattern"
   ETHTypedSplice {} -> Left "unexpected typed Template Haskell splice in pattern"
   EProc {} -> Left "unexpected proc expression in pattern"
+  EStatic {} -> Left "unexpected static expression in pattern"
   where
     checkPattern' = checkPatternWith nPlusK
 

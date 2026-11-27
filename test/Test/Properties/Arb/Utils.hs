@@ -65,6 +65,7 @@ requiredExtensions = effectiveExtensions GHC2024Edition moduleExtensionSettings
           QuasiQuotes,
           RecursiveDo,
           RequiredTypeArguments,
+          StaticPointers,
           TemplateHaskell,
           TransformListComp,
           TupleSections,

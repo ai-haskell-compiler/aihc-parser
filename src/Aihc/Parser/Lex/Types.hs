@@ -86,6 +86,7 @@ data LexTokenKind
   | TkKeywordUnderscore
   | -- Extension-conditional keywords
     TkKeywordProc
+  | TkKeywordStatic
   | TkKeywordRec
   | TkKeywordMdo
   | TkKeywordPattern

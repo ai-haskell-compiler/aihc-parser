@@ -32,7 +32,7 @@ module Aihc.Parser.Parens
 where
 
 import Aihc.Parser.Syntax
-import Data.Bifunctor (bimap)
+import Data.Bifunctor (bimap, first)
 import Data.Char (isHexDigit)
 import Data.Maybe (isJust, isNothing)
 import Data.Text qualified as T
@@ -109,6 +109,8 @@ isGreedyExpr = \case
   EProc {} -> True
   EApp _ arg | isBlockExpr arg -> isOpenEnded arg
   EApp _ arg -> isGreedyExpr arg
+  EStatic arg | isBlockExpr arg -> isOpenEnded arg
+  EStatic arg -> isGreedyExpr arg
   _ -> False
 
 -- | Check if an expression is "open-ended" - its rightmost component can
@@ -125,6 +127,7 @@ isOpenEnded = \case
   ENegate inner -> isOpenEnded inner
   EInfix _ _ rhs -> isOpenEnded rhs
   EApp _ arg | isBlockExpr arg -> isOpenEnded arg
+  EStatic arg | isBlockExpr arg -> isOpenEnded arg
   _ -> False
 
 -- | Does the pretty-printed form of an expression end with @:: Type@?
@@ -141,6 +144,7 @@ endsWithTypeSig = \case
   ENegate inner -> endsWithTypeSig inner
   EInfix _ _ rhs -> endsWithTypeSig rhs
   EApp _ arg -> endsWithTypeSig arg
+  EStatic arg -> endsWithTypeSig arg
   EIf _ _ no -> endsWithTypeSig no
   _ -> False
 
@@ -545,6 +549,7 @@ guardExprNeedsParensWith typeSigNeedsParens arrow = \case
       GuardArrow -> typeSigNeedsParens ty
       GuardEquals -> False
   EApp _ arg | isBlockExpr arg -> guardExprNeedsParensWith typeSigNeedsParens arrow arg
+  EStatic arg | isBlockExpr arg -> guardExprNeedsParensWith typeSigNeedsParens arrow arg
   expr ->
     case arrow of
       GuardArrow -> trailingTypeSigNeedsParens typeSigNeedsParens expr
@@ -559,6 +564,7 @@ trailingTypeSigNeedsParens typeSigNeedsParens expr =
     ELambdaPats _ body -> trailingTypeSigNeedsParens typeSigNeedsParens body
     EInfix _ _ rhs -> trailingTypeSigNeedsParens typeSigNeedsParens rhs
     EApp _ arg -> trailingTypeSigNeedsParens typeSigNeedsParens arg
+    EStatic arg -> trailingTypeSigNeedsParens typeSigNeedsParens arg
     EIf _ _ no -> trailingTypeSigNeedsParens typeSigNeedsParens no
     _ -> False
 
@@ -1196,6 +1202,10 @@ addExprParensPrec prec expr =
     EUnboxedSum altIdx arity inner -> EUnboxedSum altIdx arity (addDelimitedExprParens inner)
     EProc pat body ->
       wrapExpr (prec > 0) (EProc (addArrowBndrPatternParens pat) (addCmdParensIn CtxCmdTop body))
+    -- GHC parses @static@ at the application level (@fexp -> 'static' aexp@).
+    -- Thus @static f x@ is @(static f) x@, and the operand obeys the rules of
+    -- the first argument of an application.
+    EStatic {} -> addAppsChainPrec prec expr
     EPragma pragma inner ->
       -- EPragma is transparent w.r.t. precedence: wrapping decisions are made
       -- by the outer context via needsExprParens, not by a self-prec check.
@@ -1211,21 +1221,40 @@ addExprParensPrec prec expr =
 addAppsChainPrec :: Int -> Expr -> Expr
 addAppsChainPrec prec expr =
   let (root, args) = flattenApps expr
-      root' = addExprParensIn CtxAppFun root
-      nArgs = length args
-      args' =
-        [ let isLast = i == nArgs - 1
-              canStayBare = isBlockExpr a && not (endsWithTypeSig a) && (isLast || not (isOpenEnded a))
-              ctx
-                | canStayBare = CtxAppArgNoParens
-                | isLast = CtxAppArg
-                | isGreedyExpr a = CtxAppArgGreedy
-                | otherwise = CtxAppArg
-           in addExprParensIn ctx a
-        | (i, a) <- Prelude.zip [0 :: Int ..] args
-        ]
-      rebuilt = foldl EApp root' args'
+      rebuilt = withStaticRoot root args (addExprParensIn CtxAppFun) addArgs
    in wrapExpr (prec > 2) rebuilt
+  where
+    addArgs args =
+      let nArgs = length args
+       in [ let isLast = i == nArgs - 1
+                canStayBare = isBlockExpr a && not (endsWithTypeSig a) && (isLast || not (isOpenEnded a))
+                ctx
+                  | canStayBare = CtxAppArgNoParens
+                  | isLast = CtxAppArg
+                  | isGreedyExpr a = CtxAppArgGreedy
+                  | otherwise = CtxAppArg
+             in addExprParensIn ctx a
+          | (i, a) <- Prelude.zip [0 :: Int ..] args
+          ]
+
+-- | Rebuild an application chain from its root and its arguments.
+--
+-- A @static e@ root is like an application: its operand @e@ is the first
+-- argument of the chain. Thus @static e@ and the arguments that follow it get
+-- the same parentheses as the arguments of a function.
+withStaticRoot :: Expr -> [Expr] -> (Expr -> Expr) -> ([Expr] -> [Expr]) -> Expr
+withStaticRoot root args addRoot addArgs =
+  case splitStaticRoot root of
+    Just (rebuildRoot, body) ->
+      case addArgs (body : args) of
+        body' : args' -> foldl EApp (rebuildRoot body') args'
+        [] -> foldl EApp (rebuildRoot body) args
+    Nothing -> foldl EApp (addRoot root) (addArgs args)
+  where
+    splitStaticRoot = \case
+      EAnn ann sub -> first (EAnn ann .) <$> splitStaticRoot sub
+      EStatic body -> Just (EStatic, body)
+      _ -> Nothing
 
 addSpliceBodyParens :: Expr -> Expr
 addSpliceBodyParens body =
@@ -1413,6 +1442,7 @@ needsCompTransformParens = \case
   EParen {} -> False
   EInfix _ _ rhs -> needsCompTransformInfixRhsParens rhs
   EApp _ arg -> needsCompTransformParens arg
+  EStatic arg -> needsCompTransformParens arg
   ETypeApp fn _ -> needsCompTransformParens fn
   ENegate inner -> needsCompTransformParens inner
   EPragma _ inner -> needsCompTransformParens inner
@@ -1472,6 +1502,7 @@ absorbsFollowingInfix = \case
   EProc {} -> True
   ENegate inner -> absorbsFollowingInfix inner
   EApp _ arg | isBlockExpr arg -> absorbsFollowingInfix arg
+  EStatic arg | isBlockExpr arg -> absorbsFollowingInfix arg
   EInfix _ _ rhs -> absorbsFollowingInfix rhs
   _ -> False
 
@@ -1846,6 +1877,7 @@ addViewExprParensWith allowLayoutTypeSig expr =
         EAnn ann sub -> EAnn ann (addViewExprBodyParens sub)
         EInfix {} -> addViewExprInfixParens e
         EApp {} -> addViewExprAppChainParens e
+        EStatic {} -> addViewExprAppChainParens e
         _ -> addExprParens e
 
     addViewExprInfixParens e =
@@ -1874,9 +1906,8 @@ addViewExprParensWith allowLayoutTypeSig expr =
 
     addViewExprAppChainParens e =
       let (root, args) = flattenApps e
-          root' = addExprParensIn CtxAppFun root
-          args' = [addExprParensIn (viewExprAppArgCtx isLast arg) arg | (isLast, arg) <- markLast args]
-       in foldl EApp root' args'
+          addArgs = map (\(isLast, arg) -> addExprParensIn (viewExprAppArgCtx isLast arg) arg) . markLast
+       in withStaticRoot root args (addExprParensIn CtxAppFun) addArgs
 
     viewExprAppArgCtx isLast arg
       | viewExprAppArgCanStayBare isLast arg = CtxAppArgNoParens
@@ -2181,6 +2212,7 @@ endsWithCmdLayoutTail = \case
   ENegate inner -> endsWithCmdLayoutTail inner
   EPragma _ inner -> endsWithCmdLayoutTail inner
   EApp _ arg -> endsWithCmdLayoutBlock arg
+  EStatic arg -> endsWithCmdLayoutBlock arg
   _ -> False
 
 endsWithCmdLayoutBlock :: Expr -> Bool
@@ -2190,6 +2222,7 @@ endsWithCmdLayoutBlock = \case
   ELambdaCase {} -> True
   ELambdaCases {} -> True
   EApp _ arg -> endsWithCmdLayoutBlock arg
+  EStatic arg -> endsWithCmdLayoutBlock arg
   _ -> False
 
 addCmdArrAppRhsParens :: CmdCtx -> Expr -> Expr

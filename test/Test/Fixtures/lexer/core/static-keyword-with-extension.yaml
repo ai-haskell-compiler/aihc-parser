@@ -1,0 +1,8 @@
+extensions:
+  - StaticPointers
+input: "static f"
+tokens:
+  - 'TkKeywordStatic'
+  - 'TkVarId "f"'
+  - 'TkEOF'
+status: pass

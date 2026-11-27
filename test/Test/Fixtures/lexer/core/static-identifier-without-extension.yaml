@@ -1,0 +1,7 @@
+extensions: []
+input: "static f"
+tokens:
+  - 'TkVarId "static"'
+  - 'TkVarId "f"'
+  - 'TkEOF'
+status: pass

@@ -1124,6 +1124,7 @@ keywordTokenKind exts txt =
     6 -> case txt of
       "forall" -> Just TkKeywordForall
       "import" -> Just TkKeywordImport
+      "static" | memberExtension StaticPointers exts -> Just TkKeywordStatic
       "infixl" -> Just TkKeywordInfixl
       "infixr" -> Just TkKeywordInfixr
       "module" -> Just TkKeywordModule
