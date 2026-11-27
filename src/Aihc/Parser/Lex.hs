@@ -97,7 +97,7 @@ lexModuleTokensWithSourceNameAndExtensions sourceName baseExts input =
   lexTextWithExtensions True sourceName effectiveExts input
   where
     headerSettings = readModuleHeaderExtensions input
-    effectiveExts = applyImpliedExtensions (foldr applyExtensionSetting baseExts headerSettings)
+    effectiveExts = applyExtensionSettings (applyImpliedExtensions baseExts) headerSettings
 
 lexTextWithExtensions :: Bool -> FilePath -> [Extension] -> Text -> [LexToken]
 lexTextWithExtensions enableModuleLayout sourceName exts input =

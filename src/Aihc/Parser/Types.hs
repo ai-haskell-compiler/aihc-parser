@@ -42,7 +42,7 @@ import Aihc.Parser.Lex
     readModuleHeaderExtensions,
     scanAllTokens,
   )
-import Aihc.Parser.Syntax (Extension, ExtensionSet, SourceSpan, applyExtensionSetting, applyImpliedExtensions, mkExtensionSet, sourceSpanEndCol, sourceSpanEndLine, sourceSpanEndOffset, sourceSpanSourceName, sourceSpanStartCol, sourceSpanStartLine, sourceSpanStartOffset, pattern SourceSpan)
+import Aihc.Parser.Syntax (Extension, ExtensionSet, SourceSpan, applyExtensionSettings, applyImpliedExtensions, mkExtensionSet, sourceSpanEndCol, sourceSpanEndLine, sourceSpanEndOffset, sourceSpanSourceName, sourceSpanStartCol, sourceSpanStartLine, sourceSpanStartOffset, pattern SourceSpan)
 import Control.DeepSeq (NFData (..))
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -202,7 +202,7 @@ mkTokStreamModule sourceName baseExts input =
         Nothing
   where
     headerSettings = readModuleHeaderExtensions input
-    effectiveExts = applyImpliedExtensions (foldr applyExtensionSetting baseExts headerSettings)
+    effectiveExts = applyExtensionSettings (applyImpliedExtensions baseExts) headerSettings
 
 -- | Create a TokStream from pre-lexed tokens (for testing/compatibility).
 -- Layout tokens must already be inserted in the token list.

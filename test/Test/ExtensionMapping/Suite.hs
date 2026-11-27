@@ -4,6 +4,7 @@ module Test.ExtensionMapping.Suite
 where
 
 import Aihc.Parser.Syntax qualified as Syntax
+import Control.Monad (unless, when)
 import Data.List (intercalate, sort)
 import Data.Maybe (isNothing)
 import Data.Set qualified as Set
@@ -27,8 +28,25 @@ extensionMappingTests =
           testCase "Haskell2010 extensions match GHC" test_haskell2010Extensions,
           testCase "GHC2021 extensions match GHC" test_ghc2021Extensions,
           testCase "GHC2024 extensions match GHC" test_ghc2024Extensions
-        ]
+        ],
+      testCase "a later enable does not apply the implications of an earlier one again" test_laterEnableKeepsImpliedExtensionOff
     ]
+
+-- | GHC applies only the implications of the extension that a setting
+-- enables. Thus, a later enable does not turn on an extension that an
+-- earlier setting turned off. This is the pragma order of streamly-core.
+test_laterEnableKeepsImpliedExtensionOff :: IO ()
+test_laterEnableKeepsImpliedExtensionOff = do
+  let settings =
+        [ Syntax.EnableExtension Syntax.TypeFamilies,
+          Syntax.DisableExtension Syntax.MonoLocalBinds,
+          Syntax.EnableExtension Syntax.ViewPatterns
+        ]
+      extensions = Syntax.effectiveExtensions Syntax.Haskell2010Edition settings
+  when (Syntax.MonoLocalBinds `elem` extensions) $
+    assertFailure ("MonoLocalBinds is on after " <> show settings)
+  unless (Syntax.KindSignatures `elem` extensions) $
+    assertFailure ("KindSignatures is off after " <> show settings)
 
 test_cabalKnownExtensionCoverage :: IO ()
 test_cabalKnownExtensionCoverage = do
