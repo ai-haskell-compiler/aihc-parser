@@ -2,8 +2,8 @@
 
 ## Summary
 
-- Total Extensions: 84
-- Supported: 84
+- Total Extensions: 85
+- Supported: 85
 - In Progress: 0
 
 ## Extension Status
@@ -51,8 +51,9 @@
 | LinearTypes               |   🟢    | 15/15         |
 | MagicHash                 |   🟢    | 24/24         |
 | MultiParamTypeClasses     |   🟢    | 24/24         |
-| MultiWayIf                |   🟢    | 22/22         |
+| MultiWayIf                |   🟢    | 23/23         |
 | MultilineStrings          |   🟢    | 6/6           |
+| NPlusKPatterns            |   🟢    | 4/4           |
 | NamedFieldPuns            |   🟢    | 6/6           |
 | NamedWildCards            |   🟢    | 5/5           |
 | NegativeLiterals          |   🟢    | 1/1           |
@@ -76,13 +77,13 @@
 | RequiredTypeArguments     |   🟢    | 4/4           |
 | RoleAnnotations           |   🟢    | 7/7           |
 | Safe                      |   🟢    | 2/2           |
-| ScopedTypeVariables       |   🟢    | 19/19         |
+| ScopedTypeVariables       |   🟢    | 20/20         |
 | StandaloneDeriving        |   🟢    | 18/18         |
 | StandaloneKindSignatures  |   🟢    | 12/12         |
 | StarIsType                |   🟢    | 4/4           |
 | TemplateHaskell           |   🟢    | 69/69         |
 | TemplateHaskellQuotes     |   🟢    | 14/14         |
-| TransformListComp         |   🟢    | 18/18         |
+| TransformListComp         |   🟢    | 20/20         |
 | TupleSections             |   🟢    | 4/4           |
 | TypeAbstractions          |   🟢    | 5/5           |
 | TypeApplications          |   🟢    | 15/15         |
