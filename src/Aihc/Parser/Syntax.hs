@@ -121,6 +121,7 @@ module Aihc.Parser.Syntax
     ValueDecl (..),
     allKnownExtensions,
     applyExtensionSetting,
+    applyExtensionSettings,
     applyImpliedExtensions,
     binderHeadForm,
     binderHeadName,
@@ -721,10 +722,26 @@ applySettingToSet (DisableExtension ext) = deleteExtension ext
 -- immediately after each enable, so a later explicit disable can override an
 -- implication instead of having it resurrected by a final implication pass.
 effectiveExtensions :: LanguageEdition -> [ExtensionSetting] -> [Extension]
-effectiveExtensions edition = List.foldl' applyOne (languageEditionExtensions edition)
-  where
-    applyOne extensions setting@(EnableExtension _) = applyImpliedExtensions (applyExtensionSetting setting extensions)
-    applyOne extensions setting@(DisableExtension _) = applyExtensionSetting setting extensions
+effectiveExtensions edition = applyExtensionSettings (languageEditionExtensions edition)
+
+-- | Apply extension settings left to right to a set of extensions, as GHC
+-- does. To enable an extension also applies the implications of that
+-- extension, and the implications of each extension that they enable. It
+-- does not apply the implications of the other extensions in the set. Thus,
+-- with @TypeFamilies@, @NoMonoLocalBinds@, and then @ViewPatterns@,
+-- @MonoLocalBinds@ stays off. To disable an extension does not change its
+-- implications.
+applyExtensionSettings :: [Extension] -> [ExtensionSetting] -> [Extension]
+applyExtensionSettings = List.foldl' (flip applyWithImplications)
+
+-- | Apply one extension setting and, for an enable, the implications of the
+-- extension that it enables.
+applyWithImplications :: ExtensionSetting -> [Extension] -> [Extension]
+applyWithImplications setting extensions =
+  case setting of
+    EnableExtension ext ->
+      List.foldl' (flip applyWithImplications) (applyExtensionSetting setting extensions) (Map.findWithDefault [] ext impliedExtensionMap)
+    DisableExtension _ -> applyExtensionSetting setting extensions
 
 -- | Source location metadata for parsed syntax, such as the token range for
 -- @map@ in @map f xs@.

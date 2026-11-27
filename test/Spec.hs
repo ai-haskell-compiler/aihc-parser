@@ -7,7 +7,7 @@ module Main (main) where
 import Aihc.Cpp (resultOutput)
 import Aihc.Parser
 import Aihc.Parser.Internal.Common (TokParser, lazy)
-import Aihc.Parser.Lex (LexToken (..), LexTokenKind (..), lexTokens, lexTokensWithExtensions)
+import Aihc.Parser.Lex (LexToken (..), LexTokenKind (..), lexModuleTokensWithExtensions, lexTokens, lexTokensWithExtensions)
 import Aihc.Parser.Parens (addDeclParens, addExprParens, addTypeParens)
 import Aihc.Parser.Pretty ()
 import Aihc.Parser.Shorthand (Shorthand (shorthand))
@@ -246,6 +246,7 @@ buildTests = do
             testCase "skips mid-stream shebang lines as trivia" test_midStreamShebangIsSkipped,
             testCase "does not misclassify line-start #) as a directive" test_lineStartHashTokenIsNotDirective,
             testCase "lexes overloaded labels as single tokens" test_overloadedLabelLexesAsSingleToken,
+            testCase "applies module header LANGUAGE pragmas in source order" test_headerPragmasApplyInSourceOrder,
             testCase "preserves bundled export wildcard position" test_bundledExportWildcardPosition,
             testCase "parses associated data family operator names" test_associatedDataFamilyOperatorName,
             testCase "parses infix associated data family operator names" test_associatedDataFamilyInfixOperatorName,
@@ -497,6 +498,19 @@ test_lineStartHashTokenIsNotDirective =
       LexToken {lexTokenKind = TkEOF}
       ] -> pure ()
     other -> assertFailure ("expected line-start #) to lex as an unboxed tuple token, got: " <> show other)
+
+test_headerPragmasApplyInSourceOrder :: Assertion
+test_headerPragmasApplyInSourceOrder =
+  case [kind | LexToken {lexTokenKind = kind} <- lexModuleTokensWithExtensions [] source, isMagicHashCandidate kind] of
+    [TkVarId "y", TkVarSym "#"] -> pure ()
+    other -> assertFailure ("expected NoMagicHash to win over the earlier MagicHash, got: " <> show other)
+  where
+    source = "{-# LANGUAGE MagicHash #-}\n{-# LANGUAGE NoMagicHash #-}\nmodule M where\nx = y#\n"
+    isMagicHashCandidate kind =
+      case kind of
+        TkVarId name -> name == "y" || name == "y#"
+        TkVarSym _ -> True
+        _ -> False
 
 test_overloadedLabelLexesAsSingleToken :: Assertion
 test_overloadedLabelLexesAsSingleToken =

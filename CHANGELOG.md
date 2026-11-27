@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `effectiveExtensions` applies only the implications of the extension that
+  a setting enables, as GHC does. Before, each enable applied the
+  implications of all extensions in the set again. Thus, with
+  `TypeFamilies`, `NoMonoLocalBinds`, and then `ViewPatterns`,
+  `MonoLocalBinds` was on again. Now it stays off.
+- The lexer applies the `LANGUAGE` pragmas of a module header in source
+  order. Before, it applied them in reverse order. Thus, with `MagicHash`
+  and then `NoMagicHash`, `MagicHash` was on.
+
+### Added
+
+- `applyExtensionSettings` applies extension settings to a set of
+  extensions from left to right, with the implications of each enable.
+
 ## [7.0.0.0] - 2026-11-27
 
 ### Added
